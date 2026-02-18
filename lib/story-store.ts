@@ -16,6 +16,8 @@ export interface Story {
   title: string;
   premise: string;
   genre: string;
+  protagonistName: string;
+  protagonistDescription: string;
   createdAt: number;
   updatedAt: number;
   /** All segments accumulated so far */
@@ -24,6 +26,10 @@ export interface Story {
   currentIndex: number;
   /** Condensed history string sent to AI for context */
   historyContext: string;
+  /** Number of choices the player has made */
+  choiceCount: number;
+  /** AI-generated summary of story so far, used to compress long history */
+  storySummary: string;
 }
 
 // ─── Storage Keys ────────────────────────────────────────────────────
@@ -37,17 +43,22 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-/** Build a condensed history string from segments (last N segments) */
-export function buildHistoryContext(segments: StorySegment[], maxSegments = 30): string {
-  const recent = segments.slice(-maxSegments);
-  return recent
-    .map((s) => {
-      if (s.type === "narration") return `[旁白] ${s.text}`;
-      if (s.type === "dialogue") return `[${s.character}] ${s.text}`;
-      if (s.type === "choice") return `[选择] ${s.text}`;
-      return s.text;
-    })
-    .join("\n");
+/** Build a condensed history string from segments.
+ *  If a summary exists, prepend it and only include the most recent segments. */
+export function buildHistoryContext(segments: StorySegment[], storySummary = ""): string {
+  const formatSegment = (s: StorySegment) => {
+    if (s.type === "narration") return `[旁白] ${s.text}`;
+    if (s.type === "dialogue") return `[${s.character}] ${s.text}`;
+    if (s.type === "choice") return `[选择] ${s.text}`;
+    return s.text;
+  };
+
+  if (storySummary) {
+    const recent = segments.slice(-15).map(formatSegment).join("\n");
+    return `[剧情摘要]\n${storySummary}\n\n[最近剧情]\n${recent}`;
+  }
+
+  return segments.slice(-30).map(formatSegment).join("\n");
 }
 
 // ─── CRUD ────────────────────────────────────────────────────────────
@@ -81,7 +92,9 @@ export async function getStory(id: string): Promise<Story | null> {
 export async function createStory(
   title: string,
   premise: string,
-  genre: string
+  genre: string,
+  protagonistName: string,
+  protagonistDescription: string
 ): Promise<Story> {
   const id = generateId();
   const now = Date.now();
@@ -90,11 +103,15 @@ export async function createStory(
     title,
     premise,
     genre,
+    protagonistName,
+    protagonistDescription,
     createdAt: now,
     updatedAt: now,
     segments: [],
     currentIndex: 0,
     historyContext: "",
+    choiceCount: 0,
+    storySummary: "",
   };
   await AsyncStorage.setItem(storyKey(id), JSON.stringify(story));
   const ids = await getStoryIds();
@@ -105,7 +122,7 @@ export async function createStory(
 
 export async function updateStory(story: Story): Promise<void> {
   story.updatedAt = Date.now();
-  story.historyContext = buildHistoryContext(story.segments);
+  story.historyContext = buildHistoryContext(story.segments, story.storySummary);
   await AsyncStorage.setItem(storyKey(story.id), JSON.stringify(story));
 }
 

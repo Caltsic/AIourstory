@@ -12,7 +12,7 @@ const env = {
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
-  version: "1.0.0",
+  version: "1.0.1",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
@@ -95,6 +95,11 @@ const config: ExpoConfig = {
   experiments: {
     typedRoutes: true,
     reactCompiler: true,
+  },
+  extra: {
+    eas: {
+      projectId: "1d3004ae-15bf-400d-abf0-2ccef1b01632",
+    },
   },
 };
 

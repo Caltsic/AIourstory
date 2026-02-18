@@ -34,9 +34,14 @@ export default function CreateStoryScreen() {
   const [title, setTitle] = useState("");
   const [premise, setPremise] = useState("");
   const [genre, setGenre] = useState("奇幻冒险");
+  const [protagonistName, setProtagonistName] = useState("");
+  const [protagonistDescription, setProtagonistDescription] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const canCreate = title.trim().length > 0 && premise.trim().length > 0;
+  const canCreate =
+    title.trim().length > 0 &&
+    premise.trim().length > 0 &&
+    protagonistName.trim().length > 0;
 
   async function handleCreate() {
     if (!canCreate || creating) return;
@@ -61,13 +66,21 @@ export default function CreateStoryScreen() {
     setCreating(true);
     try {
       // Create story entry first
-      const story = await createStory(title.trim(), premise.trim(), genre);
-      
+      const story = await createStory(
+        title.trim(),
+        premise.trim(),
+        genre,
+        protagonistName.trim(),
+        protagonistDescription.trim()
+      );
+
       // Generate initial story segments
       const result = await generateStory({
         title: story.title,
         premise: story.premise,
         genre: story.genre,
+        protagonistName: story.protagonistName,
+        protagonistDescription: story.protagonistDescription,
       });
       
       if (result.segments && result.segments.length > 0) {
@@ -126,6 +139,53 @@ export default function CreateStoryScreen() {
               onChangeText={setTitle}
               maxLength={50}
               returnKeyType="next"
+            />
+          </View>
+
+          {/* Protagonist Input */}
+          <View style={styles.section}>
+            <Text style={[styles.label, { color: colors.foreground }]}>主角姓名</Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  backgroundColor: colors.surface,
+                  color: colors.foreground,
+                  borderColor: protagonistName.trim() ? colors.primary : colors.border,
+                },
+              ]}
+              placeholder="你扮演的角色叫什么名字..."
+              placeholderTextColor={colors.muted}
+              value={protagonistName}
+              onChangeText={setProtagonistName}
+              maxLength={20}
+              returnKeyType="next"
+            />
+          </View>
+
+          <View style={styles.section}>
+            <Text style={[styles.label, { color: colors.foreground }]}>主角简介</Text>
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              简要描述主角的性格或背景（选填）
+            </Text>
+            <TextInput
+              style={[
+                styles.textArea,
+                {
+                  backgroundColor: colors.surface,
+                  color: colors.foreground,
+                  borderColor: colors.border,
+                  minHeight: 80,
+                },
+              ]}
+              placeholder="例如：冷静内敛、擅长推理的侦探学生，隐藏着不为人知的过去..."
+              placeholderTextColor={colors.muted}
+              value={protagonistDescription}
+              onChangeText={setProtagonistDescription}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              maxLength={200}
             />
           </View>
 

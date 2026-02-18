@@ -3,6 +3,7 @@ import {
   Text,
   View,
   TouchableOpacity,
+  TextInput,
   StyleSheet,
   Platform,
   ActivityIndicator,
@@ -10,6 +11,7 @@ import {
   Modal,
   FlatList,
   Alert,
+  KeyboardAvoidingView,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -31,7 +33,7 @@ import {
   type Story,
   type StorySegment,
 } from "@/lib/story-store";
-import { generateStory, continueStory, getLLMConfig } from "@/lib/llm-client";
+import { generateStory, continueStory, summarizeStory, getLLMConfig } from "@/lib/llm-client";
 
 // ─── Typewriter Hook ─────────────────────────────────────────────────
 
@@ -86,6 +88,7 @@ export default function GameScreen() {
   const [generating, setGenerating] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [customInput, setCustomInput] = useState("");
 
   // Current segment being displayed
   const [viewIndex, setViewIndex] = useState(0);
@@ -144,6 +147,8 @@ export default function GameScreen() {
         title: s.title,
         premise: s.premise,
         genre: s.genre,
+        protagonistName: s.protagonistName ?? '',
+        protagonistDescription: s.protagonistDescription ?? '',
       });
       if (result.segments && result.segments.length > 0) {
         s.segments = result.segments as StorySegment[];
@@ -180,6 +185,7 @@ export default function GameScreen() {
   // Handle player choice
   async function handleChoice(choiceText: string) {
     if (!story || generating) return;
+    setCustomInput("");
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
@@ -199,6 +205,8 @@ export default function GameScreen() {
         premise: story.premise,
         history: story.historyContext,
         choiceText,
+        protagonistName: story.protagonistName ?? '',
+        protagonistDescription: story.protagonistDescription ?? '',
       });
 
       if (result.segments && result.segments.length > 0) {
@@ -206,6 +214,23 @@ export default function GameScreen() {
         story.segments.push(...newSegments);
         const newIndex = story.segments.length - newSegments.length;
         story.currentIndex = newIndex;
+
+        // Increment choice counter
+        story.choiceCount = (story.choiceCount ?? 0) + 1;
+
+        // Every 5 choices, generate a summary to keep context fresh
+        if (story.choiceCount % 5 === 0) {
+          try {
+            await updateStory(story); // save first so historyContext is fresh
+            const summary = await summarizeStory({ history: story.historyContext });
+            if (summary) {
+              story.storySummary = summary;
+            }
+          } catch (summaryErr) {
+            console.warn("Summary generation failed:", summaryErr);
+          }
+        }
+
         await updateStory(story);
         setStory({ ...story });
         setViewIndex(newIndex);
@@ -349,6 +374,49 @@ export default function GameScreen() {
                       </TouchableOpacity>
                     </Animated.View>
                   ))}
+
+                  {/* Custom action input */}
+                  <Animated.View
+                    entering={FadeInDown.delay((currentSegment.choices.length) * 100 + 100).duration(300)}
+                    style={styles.customInputRow}
+                  >
+                    <TextInput
+                      style={[
+                        styles.customInput,
+                        {
+                          color: colors.foreground,
+                          borderColor: colors.primary + "60",
+                          backgroundColor: colors.surface + "60",
+                        },
+                      ]}
+                      placeholder="或输入自定义行动..."
+                      placeholderTextColor={colors.muted}
+                      value={customInput}
+                      onChangeText={setCustomInput}
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        if (customInput.trim()) handleChoice(customInput.trim());
+                      }}
+                    />
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (customInput.trim()) handleChoice(customInput.trim());
+                      }}
+                      disabled={!customInput.trim()}
+                      style={[
+                        styles.customInputButton,
+                        {
+                          backgroundColor: customInput.trim() ? colors.primary : colors.surface,
+                          borderColor: colors.border,
+                        },
+                      ]}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ color: customInput.trim() ? "#fff" : colors.muted, fontWeight: "600", fontSize: 14 }}>
+                        确认
+                      </Text>
+                    </TouchableOpacity>
+                  </Animated.View>
                 </View>
               )}
 
@@ -521,7 +589,7 @@ const styles = StyleSheet.create({
   },
   dialogueArea: {
     minHeight: 220,
-    maxHeight: 320,
+    maxHeight: 440,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 24,
@@ -657,5 +725,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontStyle: "italic",
+  },
+  customInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+  },
+  customInput: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  customInputButton: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
 });

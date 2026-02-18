@@ -3,7 +3,7 @@
  * 直接调用 OpenAI 兼容的 API，无需后端
  */
 
-import { STORY_SYSTEM_PROMPT, CONTINUE_SYSTEM_PROMPT } from './llm-prompts';
+import { STORY_SYSTEM_PROMPT, CONTINUE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT } from './llm-prompts';
 import { getStorageConfig, saveStorageConfig, clearStorageConfig, type StorageConfig } from './storage';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -24,6 +24,8 @@ export interface GenerateStoryParams {
   title: string;
   premise: string;
   genre: string;
+  protagonistName: string;
+  protagonistDescription: string;
 }
 
 export interface ContinueStoryParams {
@@ -32,6 +34,12 @@ export interface ContinueStoryParams {
   premise: string;
   history: string;
   choiceText: string;
+  protagonistName: string;
+  protagonistDescription: string;
+}
+
+export interface SummarizeStoryParams {
+  history: string;
 }
 
 export interface LLMResponse {
@@ -131,7 +139,7 @@ export async function generateStory(params: GenerateStoryParams): Promise<LLMRes
         },
         {
           role: 'user',
-          content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。请生成5-10个故事片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
+          content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ''}。请生成5-10个故事片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
         },
       ],
       temperature: 0.8,
@@ -177,7 +185,7 @@ export async function continueStory(params: ContinueStoryParams): Promise<LLMRes
         },
         {
           role: 'user',
-          content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n\n历史剧情：\n${params.history}\n\n用户选择了：${params.choiceText}\n\n请根据用户的选择继续生成3-5个新的故事片段，保持剧情连贯性。`,
+          content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ''}\n\n历史剧情：\n${params.history}\n\n用户选择了：${params.choiceText}\n\n请根据用户的选择继续生成3-5个新的故事片段，保持剧情连贯性。`,
         },
       ],
       temperature: 0.8,
@@ -194,6 +202,43 @@ export async function continueStory(params: ContinueStoryParams): Promise<LLMRes
   const content = data.choices[0]?.message?.content || '';
 
   return parseLLMResponse(content);
+}
+
+/**
+ * 生成剧情摘要（用于长剧情的上下文压缩）
+ */
+export async function summarizeStory(params: SummarizeStoryParams): Promise<string> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error('请先在设置中配置 API Key');
+  }
+
+  const url = config.apiUrl.includes('/chat/completions') ? config.apiUrl : `${config.apiUrl}/chat/completions`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
+        { role: 'user', content: params.history },
+      ],
+      temperature: 0.3,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`摘要生成失败: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0]?.message?.content?.trim() ?? '';
 }
 
 /**
@@ -219,8 +264,17 @@ function parseLLMResponse(content: string): LLMResponse {
 
     // 验证每个片段的结构
     for (const segment of parsed.segments) {
-      if (!segment.type || !segment.text) {
-        throw new Error('AI 返回的数据格式不正确：片段缺少 type 或 text 字段');
+      if (!segment.type) {
+        throw new Error('AI 返回的数据格式不正确：片段缺少 type 字段');
+      }
+
+      // choice 类型允许 text 为空（AI 可能只提供 choices 数组）
+      if (!segment.text) {
+        if (segment.type === 'choice') {
+          segment.text = '';
+        } else {
+          throw new Error('AI 返回的数据格式不正确：片段缺少 text 字段');
+        }
       }
 
       if (segment.type === 'dialogue' && !segment.character) {
