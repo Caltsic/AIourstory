@@ -1,0 +1,123 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+// Mock AsyncStorage
+const mockStorage: Record<string, string> = {};
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn((key: string) => Promise.resolve(mockStorage[key] ?? null)),
+    setItem: vi.fn((key: string, value: string) => {
+      mockStorage[key] = value;
+      return Promise.resolve();
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete mockStorage[key];
+      return Promise.resolve();
+    }),
+    getAllKeys: vi.fn(() => Promise.resolve(Object.keys(mockStorage))),
+    multiRemove: vi.fn((keys: string[]) => {
+      keys.forEach((k) => delete mockStorage[k]);
+      return Promise.resolve();
+    }),
+  },
+}));
+
+import {
+  createStory,
+  getStory,
+  getAllStories,
+  updateStory,
+  deleteStory,
+  buildHistoryContext,
+  type StorySegment,
+} from "../lib/story-store";
+
+beforeEach(() => {
+  // Clear mock storage before each test
+  Object.keys(mockStorage).forEach((key) => delete mockStorage[key]);
+});
+
+describe("story-store", () => {
+  it("creates a story with correct fields", async () => {
+    const story = await createStory("测试故事", "这是一个测试开头", "奇幻冒险");
+    expect(story.id).toBeTruthy();
+    expect(story.title).toBe("测试故事");
+    expect(story.premise).toBe("这是一个测试开头");
+    expect(story.genre).toBe("奇幻冒险");
+    expect(story.segments).toEqual([]);
+    expect(story.currentIndex).toBe(0);
+    expect(story.createdAt).toBeGreaterThan(0);
+  });
+
+  it("retrieves a story by id", async () => {
+    const created = await createStory("故事A", "开头A", "校园日常");
+    const retrieved = await getStory(created.id);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.title).toBe("故事A");
+    expect(retrieved!.genre).toBe("校园日常");
+  });
+
+  it("returns null for non-existent story", async () => {
+    const result = await getStory("nonexistent");
+    expect(result).toBeNull();
+  });
+
+  it("lists all stories sorted by updatedAt desc", async () => {
+    const s1 = await createStory("故事1", "开头1", "奇幻冒险");
+    // Wait a bit so s2 has a later timestamp
+    await new Promise((r) => setTimeout(r, 10));
+    const s2 = await createStory("故事2", "开头2", "悬疑推理");
+
+    const all = await getAllStories();
+    expect(all.length).toBe(2);
+    // s2 was created later, so it should be first
+    expect(all[0].title).toBe("故事2");
+    expect(all[1].title).toBe("故事1");
+  });
+
+  it("deletes a story", async () => {
+    const story = await createStory("待删除", "开头", "科幻未来");
+    await deleteStory(story.id);
+    const result = await getStory(story.id);
+    expect(result).toBeNull();
+  });
+
+  it("updates story segments and history context", async () => {
+    const story = await createStory("更新测试", "开头", "古风仙侠");
+    story.segments = [
+      { type: "narration", text: "夜幕降临，月光洒在古老的庭院中。" },
+      { type: "dialogue", character: "林月", text: "你来了。" },
+    ];
+    await updateStory(story);
+
+    const updated = await getStory(story.id);
+    expect(updated!.segments.length).toBe(2);
+    expect(updated!.historyContext).toContain("夜幕降临");
+    expect(updated!.historyContext).toContain("林月");
+  });
+});
+
+describe("buildHistoryContext", () => {
+  it("builds context from segments", () => {
+    const segments: StorySegment[] = [
+      { type: "narration", text: "清晨的阳光透过窗帘。" },
+      { type: "dialogue", character: "小明", text: "早上好！" },
+      { type: "choice", text: "你选择了：「去学校」" },
+    ];
+    const context = buildHistoryContext(segments);
+    expect(context).toContain("[旁白] 清晨的阳光透过窗帘。");
+    expect(context).toContain("[小明] 早上好！");
+    expect(context).toContain("[选择] 你选择了：「去学校」");
+  });
+
+  it("limits to maxSegments", () => {
+    const segments: StorySegment[] = Array.from({ length: 50 }, (_, i) => ({
+      type: "narration" as const,
+      text: `段落${i}`,
+    }));
+    const context = buildHistoryContext(segments, 10);
+    const lines = context.split("\n");
+    expect(lines.length).toBe(10);
+    expect(context).toContain("段落40");
+    expect(context).not.toContain("段落39");
+  });
+});
