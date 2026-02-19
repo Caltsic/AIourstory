@@ -38,6 +38,16 @@ export interface StorySegment {
   diceResult?: DiceResult;
 }
 
+export interface ImagePromptRecord {
+  id: string;
+  prompt: string;
+  summary: string;
+  status: "pending" | "success" | "failed";
+  createdAt: number;
+  imageUri?: string;
+  error?: string;
+}
+
 export interface Story {
   id: string;
   title: string;
@@ -59,6 +69,12 @@ export interface Story {
   storySummary: string;
   /** URI of the current background image (base64 data URI or remote URL) */
   backgroundImageUri?: string;
+  /** Current image generation status for user-facing feedback */
+  imageGenerationStatus: "idle" | "generating" | "success" | "failed";
+  /** Timestamp of the latest image generation attempt */
+  lastImageGenerationAt?: number;
+  /** History of generated image prompts and outcomes */
+  imagePromptHistory: ImagePromptRecord[];
   /** Difficulty setting for dice mechanics */
   difficulty: DifficultyLevel;
   /** Character cards for named NPCs */
@@ -78,7 +94,10 @@ function generateId(): string {
 
 /** Build a condensed history string from segments.
  *  If a summary exists, prepend it and only include the most recent segments. */
-export function buildHistoryContext(segments: StorySegment[], storySummary = ""): string {
+export function buildHistoryContext(
+  segments: StorySegment[],
+  storySummary = "",
+): string {
   const formatSegment = (s: StorySegment) => {
     let base = "";
     if (s.type === "narration") base = `[旁白] ${s.text}`;
@@ -114,6 +133,8 @@ async function saveStoryIds(ids: string[]): Promise<void> {
 function migrateStory(story: Story): Story {
   if (!story.difficulty) story.difficulty = "普通";
   if (!story.characterCards) story.characterCards = [];
+  if (!story.imageGenerationStatus) story.imageGenerationStatus = "idle";
+  if (!story.imagePromptHistory) story.imagePromptHistory = [];
   return story;
 }
 
@@ -140,7 +161,7 @@ export async function createStory(
   genre: string,
   protagonistName: string,
   protagonistDescription: string,
-  difficulty: DifficultyLevel = "普通"
+  difficulty: DifficultyLevel = "普通",
 ): Promise<Story> {
   const id = generateId();
   const now = Date.now();
@@ -158,6 +179,8 @@ export async function createStory(
     historyContext: "",
     choiceCount: 0,
     storySummary: "",
+    imageGenerationStatus: "idle",
+    imagePromptHistory: [],
     difficulty,
     characterCards: [],
   };
@@ -170,7 +193,10 @@ export async function createStory(
 
 export async function updateStory(story: Story): Promise<void> {
   story.updatedAt = Date.now();
-  story.historyContext = buildHistoryContext(story.segments, story.storySummary);
+  story.historyContext = buildHistoryContext(
+    story.segments,
+    story.storySummary,
+  );
   await AsyncStorage.setItem(storyKey(story.id), JSON.stringify(story));
 }
 

@@ -3,7 +3,11 @@
  * 兼容 OpenAI images API 格式（Seedream、SiliconFlow、FLUX 等）
  */
 
-import { getImageStorageConfig, saveImageStorageConfig, type ImageStorageConfig } from './storage';
+import {
+  getImageStorageConfig,
+  saveImageStorageConfig,
+  type ImageStorageConfig,
+} from "./storage";
 
 export type { ImageStorageConfig };
 
@@ -15,6 +19,7 @@ export async function saveImageConfig(config: {
   imageApiKey: string;
   imageApiUrl: string;
   imageModel: string;
+  imageSize?: string;
 }): Promise<void> {
   return saveImageStorageConfig(config);
 }
@@ -29,45 +34,86 @@ export async function generateImage(prompt: string): Promise<string> {
   const config = await getImageStorageConfig();
 
   if (!config.imageApiKey || !config.imageApiUrl || !config.imageModel) {
-    throw new Error('图片生成 API 未配置');
+    throw new Error("图片生成 API 未配置");
   }
 
   // 确保 URL 以 /images/generations 结尾
-  const baseUrl = config.imageApiUrl.replace(/\/$/, '');
-  const url = baseUrl.endsWith('/images/generations')
+  const baseUrl = config.imageApiUrl.replace(/\/$/, "");
+  const url = baseUrl.endsWith("/images/generations")
     ? baseUrl
     : `${baseUrl}/images/generations`;
 
-  const response = await fetch(url, {
-    method: 'POST',
+  const imageSize = config.imageSize.trim();
+  const requestBody: Record<string, unknown> = {
+    model: config.imageModel,
+    prompt,
+    n: 1,
+  };
+
+  if (imageSize) {
+    requestBody.size = imageSize;
+    requestBody.image_size = imageSize; // 兼容部分提供商的字段命名
+  }
+
+  let response = await fetch(url, {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${config.imageApiKey}`,
     },
-    body: JSON.stringify({
-      model: config.imageModel,
-      prompt,
-      n: 1,
-      image_size: '1024x576', // 横版比例，适合故事背景
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`图片生成失败: ${response.status} - ${errorText}`);
+    let errorText = await response.text();
+
+    // Seedream 4.5 等服务要求更高像素时，自动按最小像素重试一次
+    if (response.status === 400 && /size/i.test(errorText)) {
+      const minPixelsMatch = errorText.match(/at least\s*(\d+)\s*pixels/i);
+      if (minPixelsMatch) {
+        const minPixels = Number(minPixelsMatch[1]);
+        const side = Math.ceil(Math.sqrt(minPixels));
+        const retrySize = `${side}x${side}`;
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.imageApiKey}`,
+          },
+          body: JSON.stringify({
+            ...requestBody,
+            size: retrySize,
+            image_size: retrySize,
+          }),
+        });
+
+        if (!response.ok) {
+          errorText = await response.text();
+          throw new Error(`图片生成失败: ${response.status} - ${errorText}`);
+        }
+      } else {
+        throw new Error(`图片生成失败: ${response.status} - ${errorText}`);
+      }
+    } else {
+      throw new Error(`图片生成失败: ${response.status} - ${errorText}`);
+    }
   }
 
-  const data = await response.json() as Record<string, unknown>;
+  const data = (await response.json()) as Record<string, unknown>;
+
+  if (typeof data.task_id === "string" || typeof data.id === "string") {
+    throw new Error(
+      "图片任务已提交，当前服务返回异步任务，请稍后重试或检查服务是否支持同步返回图片",
+    );
+  }
 
   // 尝试提取图片结果（兼容 data[] 和 images[] 两种格式）
   type ImageItem = { b64_json?: string; url?: string };
   const items: ImageItem[] =
-    (data.data as ImageItem[]) ??
-    (data.images as ImageItem[]) ??
-    [];
+    (data.data as ImageItem[]) ?? (data.images as ImageItem[]) ?? [];
 
   if (items.length === 0) {
-    throw new Error('图片生成 API 返回了空结果');
+    throw new Error("图片生成 API 返回了空结果");
   }
 
   const item = items[0];
@@ -79,5 +125,5 @@ export async function generateImage(prompt: string): Promise<string> {
     return item.url;
   }
 
-  throw new Error('图片生成 API 返回格式不支持');
+  throw new Error("图片生成 API 返回格式不支持");
 }

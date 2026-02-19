@@ -35,6 +35,7 @@ import {
   type StorySegment,
   type CharacterCard,
   type DiceResult,
+  type ImagePromptRecord,
 } from "@/lib/story-store";
 import {
   generateStory,
@@ -45,7 +46,7 @@ import {
   evaluateCustomAction,
 } from "@/lib/llm-client";
 import { buildDiceOutcomeContext } from "@/lib/llm-prompts";
-import { generateImage } from "@/lib/image-client";
+import { generateImage, getImageConfig } from "@/lib/image-client";
 import { rollDice, evaluateDiceResult } from "@/lib/dice";
 
 // ─── Typewriter Hook ─────────────────────────────────────────────────
@@ -110,6 +111,7 @@ export default function GameScreen() {
   const [editingCard, setEditingCard] = useState<CharacterCard | null>(null);
   const [editPersonality, setEditPersonality] = useState("");
   const [editBackground, setEditBackground] = useState("");
+  const [imageGenerating, setImageGenerating] = useState(false);
   const [showDiceModal, setShowDiceModal] = useState(false);
   const [diceDisplayValue, setDiceDisplayValue] = useState(1);
   const [diceResult, setDiceResult] = useState<DiceResult | null>(null);
@@ -251,6 +253,169 @@ export default function GameScreen() {
     }
   }
 
+  function getImageStatusLabel(): string {
+    if (imageGenerating || story?.imageGenerationStatus === "generating") {
+      return "生图中";
+    }
+    if (story?.imageGenerationStatus === "success") {
+      return "生图完成";
+    }
+    if (story?.imageGenerationStatus === "failed") {
+      return "生图失败";
+    }
+    return "未生图";
+  }
+
+  function formatPromptTime(ts: number): string {
+    const d = new Date(ts);
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function handleGenerateImage() {
+    if (!story || imageGenerating) return;
+
+    const config = await getImageConfig();
+    if (!config.imageApiUrl || !config.imageModel) {
+      Alert.alert("未配置生图", "请先在设置中填写图片 API URL 和模型名称");
+      return;
+    }
+
+    const promptRecordId =
+      Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+    setImageGenerating(true);
+    try {
+      story.imageGenerationStatus = "generating";
+      await updateStory(story);
+      setStory({ ...story });
+
+      const summary = await summarizeStory({ history: story.historyContext });
+      if (summary) {
+        story.storySummary = summary;
+      }
+
+      const promptSource = summary || story.historyContext;
+      const imagePrompt = await generateImagePrompt(promptSource);
+      const promptRecord: ImagePromptRecord = {
+        id: promptRecordId,
+        prompt: imagePrompt,
+        summary: summary || "",
+        status: "pending",
+        createdAt: Date.now(),
+      };
+
+      story.imagePromptHistory = [
+        promptRecord,
+        ...(story.imagePromptHistory ?? []),
+      ].slice(0, 30);
+      await updateStory(story);
+      setStory({ ...story });
+
+      const uri = await generateImage(imagePrompt);
+      const current = story.imagePromptHistory.find(
+        (p) => p.id === promptRecordId,
+      );
+      if (current) {
+        current.status = "success";
+        current.imageUri = uri;
+      }
+
+      story.backgroundImageUri = uri;
+      story.imageGenerationStatus = "success";
+      story.lastImageGenerationAt = Date.now();
+
+      await updateStory(story);
+      setStory({ ...story });
+      setBackgroundImageUri(uri);
+      Alert.alert("生图完成", "背景图已更新");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "未知错误";
+      if (!story.imagePromptHistory) story.imagePromptHistory = [];
+      const current = story.imagePromptHistory.find(
+        (p) => p.id === promptRecordId,
+      );
+      if (current) {
+        current.status = "failed";
+        current.error = message;
+      }
+      story.imageGenerationStatus = "failed";
+      story.lastImageGenerationAt = Date.now();
+      await updateStory(story);
+      setStory({ ...story });
+      Alert.alert("生图失败", message);
+    } finally {
+      setImageGenerating(false);
+    }
+  }
+
+  function renderImagePromptHistorySection() {
+    const promptHistory = story?.imagePromptHistory ?? [];
+    return (
+      <View
+        style={[styles.promptHistorySection, { borderTopColor: colors.border }]}
+      >
+        <Text style={[styles.promptHistoryTitle, { color: colors.foreground }]}>
+          历史生图提示词
+        </Text>
+        {promptHistory.length === 0 ? (
+          <Text style={[styles.promptHistoryEmpty, { color: colors.muted }]}>
+            暂无生图记录
+          </Text>
+        ) : (
+          promptHistory.map((item) => (
+            <View
+              key={item.id}
+              style={[styles.promptHistoryItem, { borderColor: colors.border }]}
+            >
+              <View style={styles.promptHistoryMeta}>
+                <Text
+                  style={[styles.promptHistoryTime, { color: colors.muted }]}
+                >
+                  {formatPromptTime(item.createdAt)}
+                </Text>
+                <Text
+                  style={[
+                    styles.promptHistoryStatus,
+                    {
+                      color:
+                        item.status === "success"
+                          ? "#22c55e"
+                          : item.status === "failed"
+                            ? "#ef4444"
+                            : colors.warning,
+                    },
+                  ]}
+                >
+                  {item.status === "success"
+                    ? "完成"
+                    : item.status === "failed"
+                      ? "失败"
+                      : "进行中"}
+                </Text>
+              </View>
+              <Text
+                style={[
+                  styles.promptHistoryPrompt,
+                  { color: colors.foreground },
+                ]}
+              >
+                {item.prompt}
+              </Text>
+              {item.error ? (
+                <Text
+                  style={[styles.promptHistoryError, { color: colors.error }]}
+                >
+                  {item.error}
+                </Text>
+              ) : null}
+            </View>
+          ))
+        )}
+      </View>
+    );
+  }
+
   // Advance to next segment
   function handleTap() {
     if (!story || !currentSegment) return;
@@ -386,8 +551,8 @@ export default function GameScreen() {
         // Increment choice counter
         story.choiceCount = (story.choiceCount ?? 0) + 1;
 
-        // Every 5 choices, generate a summary and a background image
-        if (story.choiceCount % 5 === 0) {
+        // Every 10 choices, refresh summary for context compression only
+        if (story.choiceCount % 10 === 0) {
           try {
             await updateStory(story);
             const summary = await summarizeStory({
@@ -395,17 +560,6 @@ export default function GameScreen() {
             });
             if (summary) {
               story.storySummary = summary;
-              const storyRef = story;
-              generateImagePrompt(summary)
-                .then((imgPrompt) => generateImage(imgPrompt))
-                .then((uri) => {
-                  storyRef.backgroundImageUri = uri;
-                  updateStory(storyRef).catch(() => {});
-                  setBackgroundImageUri(uri);
-                })
-                .catch((imgErr) => {
-                  console.warn("Background image generation failed:", imgErr);
-                });
             }
           } catch (summaryErr) {
             console.warn("Summary generation failed:", summaryErr);
@@ -484,17 +638,65 @@ export default function GameScreen() {
             >
               {story?.title}
             </Text>
-            <TouchableOpacity
-              onPress={() => setShowMenu(true)}
-              style={styles.topBarButton}
-              activeOpacity={0.7}
+            <View style={styles.topBarActions}>
+              <TouchableOpacity
+                onPress={handleGenerateImage}
+                style={[
+                  styles.imageButton,
+                  {
+                    borderColor:
+                      (backgroundImageUri ? "#ffffff" : colors.primary) + "80",
+                    backgroundColor: backgroundImageUri
+                      ? "rgba(255,255,255,0.12)"
+                      : colors.primary + "18",
+                  },
+                ]}
+                activeOpacity={0.8}
+                disabled={imageGenerating}
+              >
+                {imageGenerating ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={backgroundImageUri ? "#fff" : colors.primary}
+                  />
+                ) : (
+                  <Text
+                    style={[
+                      styles.imageButtonText,
+                      { color: backgroundImageUri ? "#fff" : colors.primary },
+                    ]}
+                  >
+                    生图
+                  </Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowMenu(true)}
+                style={styles.topBarButton}
+                activeOpacity={0.7}
+              >
+                <IconSymbol
+                  name="ellipsis"
+                  size={22}
+                  color={backgroundImageUri ? "#fff" : colors.foreground}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.imageStatusContainer}>
+            <Text
+              style={[
+                styles.imageStatusText,
+                {
+                  color: backgroundImageUri
+                    ? "rgba(255,255,255,0.92)"
+                    : colors.muted,
+                },
+              ]}
             >
-              <IconSymbol
-                name="ellipsis"
-                size={22}
-                color={backgroundImageUri ? "#fff" : colors.foreground}
-              />
-            </TouchableOpacity>
+              {getImageStatusLabel()}
+            </Text>
           </View>
 
           {/* Scene decoration */}
@@ -900,6 +1102,7 @@ export default function GameScreen() {
             data={story?.characterCards ?? []}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.historyList}
+            ListFooterComponent={renderImagePromptHistorySection}
             ListEmptyComponent={
               <Text style={[styles.emptyText, { color: colors.muted }]}>
                 暂无角色卡片，随着剧情推进会自动生成
@@ -1117,6 +1320,7 @@ export default function GameScreen() {
             data={story?.segments.slice(0, viewIndex + 1) ?? []}
             keyExtractor={(_, idx) => idx.toString()}
             contentContainerStyle={styles.historyList}
+            ListFooterComponent={renderImagePromptHistorySection}
             renderItem={({ item }) => (
               <View
                 style={[
@@ -1195,11 +1399,43 @@ const styles = StyleSheet.create({
   topBarButton: {
     padding: 8,
   },
+  topBarActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  imageButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    minWidth: 58,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    marginRight: 2,
+  },
+  imageButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
   storyTitle: {
     fontSize: 16,
     fontWeight: "600",
     flex: 1,
     textAlign: "center",
+  },
+  imageStatusContainer: {
+    alignSelf: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(0,0,0,0.18)",
+    marginTop: 4,
+  },
+  imageStatusText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   sceneDecoration: {
     flex: 1,
@@ -1475,6 +1711,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     marginTop: 40,
+  },
+  promptHistorySection: {
+    marginTop: 16,
+    borderTopWidth: 0.5,
+    paddingTop: 12,
+    gap: 8,
+  },
+  promptHistoryTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  promptHistoryEmpty: {
+    fontSize: 13,
+  },
+  promptHistoryItem: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    gap: 6,
+  },
+  promptHistoryMeta: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  promptHistoryTime: {
+    fontSize: 12,
+  },
+  promptHistoryStatus: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  promptHistoryPrompt: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  promptHistoryError: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   sceneBackgroundImage: {
     resizeMode: "cover",

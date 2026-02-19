@@ -38,18 +38,60 @@ beforeEach(() => {
 
 describe("story-store", () => {
   it("creates a story with correct fields", async () => {
-    const story = await createStory("测试故事", "这是一个测试开头", "奇幻冒险", "主角", "测试简介");
+    const story = await createStory(
+      "测试故事",
+      "这是一个测试开头",
+      "奇幻冒险",
+      "主角",
+      "测试简介",
+    );
     expect(story.id).toBeTruthy();
     expect(story.title).toBe("测试故事");
     expect(story.premise).toBe("这是一个测试开头");
     expect(story.genre).toBe("奇幻冒险");
     expect(story.segments).toEqual([]);
     expect(story.currentIndex).toBe(0);
+    expect(story.imageGenerationStatus).toBe("idle");
+    expect(story.imagePromptHistory).toEqual([]);
     expect(story.createdAt).toBeGreaterThan(0);
   });
 
+  it("migrates legacy story fields", async () => {
+    const legacyStory = {
+      id: "legacy_1",
+      title: "旧存档",
+      premise: "旧开头",
+      genre: "校园日常",
+      protagonistName: "主角",
+      protagonistDescription: "",
+      createdAt: 1,
+      updatedAt: 1,
+      segments: [],
+      currentIndex: 0,
+      historyContext: "",
+      choiceCount: 0,
+      storySummary: "",
+      difficulty: "普通",
+      characterCards: [],
+    };
+
+    mockStorage.stories_index = JSON.stringify([legacyStory.id]);
+    mockStorage[`story_${legacyStory.id}`] = JSON.stringify(legacyStory);
+
+    const migrated = await getStory(legacyStory.id);
+    expect(migrated).not.toBeNull();
+    expect(migrated!.imageGenerationStatus).toBe("idle");
+    expect(migrated!.imagePromptHistory).toEqual([]);
+  });
+
   it("retrieves a story by id", async () => {
-    const created = await createStory("故事A", "开头A", "校园日常", "主角A", "");
+    const created = await createStory(
+      "故事A",
+      "开头A",
+      "校园日常",
+      "主角A",
+      "",
+    );
     const retrieved = await getStory(created.id);
     expect(retrieved).not.toBeNull();
     expect(retrieved!.title).toBe("故事A");

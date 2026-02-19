@@ -27,7 +27,7 @@ const GENRES = [
   { label: "奇幻冒险", emoji: "⚔️" },
   { label: "校园日常", emoji: "🏫" },
   { label: "悬疑推理", emoji: "🔍" },
-  { label: "科幻未来", emoji: "🚀" },
+  { label: "都市情感", emoji: "🌆" },
   { label: "古风仙侠", emoji: "🏔️" },
   { label: "自定义", emoji: "✨" },
 ];

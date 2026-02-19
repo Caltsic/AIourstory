@@ -68,6 +68,14 @@ export interface RandomStoryConfig {
   premise: string;
 }
 
+const RANDOM_GENRE_POOL = [
+  "奇幻冒险",
+  "校园日常",
+  "悬疑推理",
+  "古风仙侠",
+  "都市情感",
+] as const;
+
 export interface NewCharacterData {
   name: string;
   gender: string;
@@ -128,6 +136,36 @@ function extractJsonPayload(content: string): string {
   }
 
   throw new Error("无法解析 AI 返回的内容");
+}
+
+function splitNarrationText(text: string, maxLen = 60): string[] {
+  const normalized = text.trim();
+  if (!normalized) return [""];
+  if (normalized.length <= maxLen) return [normalized];
+
+  const parts: string[] = [];
+  let remaining = normalized;
+
+  while (remaining.length > maxLen) {
+    const candidate = remaining.slice(0, maxLen);
+    let splitAt = -1;
+    for (let i = candidate.length - 1; i >= 0; i -= 1) {
+      const ch = candidate[i];
+      if ("，。！？；,.!?;：".includes(ch)) {
+        splitAt = i + 1;
+        break;
+      }
+    }
+    if (splitAt < 20) {
+      splitAt = maxLen;
+    }
+
+    parts.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+
+  if (remaining) parts.push(remaining);
+  return parts.filter(Boolean);
 }
 
 // ─── Config Management ──────────────────────────────────────────────
@@ -236,7 +274,7 @@ export async function generateStory(
           content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ""}。\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n请生成5-10个故事片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
         },
       ],
-      temperature: 0.8,
+      temperature: 1.0,
       max_tokens: 2000,
     }),
   });
@@ -286,7 +324,7 @@ export async function continueStory(
           content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n历史剧情：\n${params.history}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n请根据用户的选择继续生成3-5个新的故事片段，保持剧情连贯性。`,
         },
       ],
-      temperature: 0.8,
+      temperature: 1.0,
       max_tokens: 1500,
     }),
   });
@@ -353,6 +391,9 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
     throw new Error("请先在设置中配置 API Key");
   }
 
+  const randomBucket = Math.floor(Math.random() * 5) + 1;
+  const targetGenre = RANDOM_GENRE_POOL[randomBucket - 1];
+
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
@@ -366,9 +407,12 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
       model: config.model,
       messages: [
         { role: "system", content: RANDOMIZE_SYSTEM_PROMPT },
-        { role: "user", content: "请随机生成一套故事设定。" },
+        {
+          role: "user",
+          content: `请基于题材「${targetGenre}」生成一套故事设定。必须使用该题材，不要改成其他题材。默认避免硬科幻术语与生僻专业词，语言自然口语化。`,
+        },
       ],
-      temperature: 1.0,
+      temperature: 1.25,
       max_tokens: 600,
     }),
   });
@@ -386,7 +430,10 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
     if (!parsed.title || !parsed.premise || !parsed.protagonistName) {
       throw new Error("返回字段不完整");
     }
-    return parsed;
+    return {
+      ...parsed,
+      genre: targetGenre,
+    };
   } catch {
     throw new Error("AI 返回的设定格式不正确，请重试");
   }
@@ -444,6 +491,8 @@ function parseLLMResponse(content: string): LLMResponse {
     }
 
     // 验证每个片段的结构
+    const normalizedSegments: StorySegment[] = [];
+
     for (const segment of parsed.segments) {
       if (!segment.type) {
         throw new Error("AI 返回的数据格式不正确：片段缺少 type 字段");
@@ -480,6 +529,16 @@ function parseLLMResponse(content: string): LLMResponse {
         }
         // judgmentValues may be absent in 无随机 mode — that's fine
       }
+
+      if (segment.type === "narration" && typeof segment.text === "string") {
+        const chunks = splitNarrationText(segment.text, 60);
+        for (const chunk of chunks) {
+          normalizedSegments.push({ ...segment, text: chunk });
+        }
+        continue;
+      }
+
+      normalizedSegments.push(segment);
     }
 
     // Extract newCharacters if present
@@ -492,7 +551,7 @@ function parseLLMResponse(content: string): LLMResponse {
         )
       : [];
 
-    return { segments: parsed.segments, newCharacters };
+    return { segments: normalizedSegments, newCharacters };
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error("AI 返回的不是有效的 JSON 格式");

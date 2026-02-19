@@ -22,6 +22,31 @@ const API_PRESETS = [
     model: "deepseek-chat",
   },
   {
+    name: "Grok (xAI)",
+    apiUrl: "https://api.x.ai/v1/chat/completions",
+    model: "grok-2-latest",
+  },
+  {
+    name: "KIMI (Moonshot)",
+    apiUrl: "https://api.moonshot.cn/v1/chat/completions",
+    model: "moonshot-v1-8k",
+  },
+  {
+    name: "GLM (Z.ai)",
+    apiUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    model: "glm-4-flash",
+  },
+  {
+    name: "Seed (Doubao)",
+    apiUrl: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+    model: "doubao-seed-1-6-250615",
+  },
+  {
+    name: "AIHubMix",
+    apiUrl: "https://api.aihubmix.com/v1/chat/completions",
+    model: "gpt-4o-mini",
+  },
+  {
     name: "Claude (通过 OpenRouter)",
     apiUrl: "https://openrouter.ai/api/v1/chat/completions",
     model: "anthropic/claude-3-haiku",
@@ -41,7 +66,7 @@ export default function SettingsScreen() {
   const [apiKey, setApiKey] = useState("");
   const [apiUrl, setApiUrl] = useState("");
   const [model, setModel] = useState("");
-  const [selectedPreset, setSelectedPreset] = useState(3); // 默认为自定义
+  const [selectedPreset, setSelectedPreset] = useState(API_PRESETS.length - 1); // 默认为自定义
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [testing, setTesting] = useState(false);
 
@@ -49,6 +74,7 @@ export default function SettingsScreen() {
   const [imageApiKey, setImageApiKey] = useState("");
   const [imageApiUrl, setImageApiUrl] = useState("");
   const [imageModel, setImageModel] = useState("");
+  const [imageSize, setImageSize] = useState("");
 
   // 加载保存的配置
   useEffect(() => {
@@ -73,6 +99,7 @@ export default function SettingsScreen() {
       setImageApiKey(imgConfig.imageApiKey || "");
       setImageApiUrl(imgConfig.imageApiUrl);
       setImageModel(imgConfig.imageModel);
+      setImageSize(imgConfig.imageSize || "");
     } catch (error) {
       console.error("Failed to load config:", error);
     }
@@ -88,6 +115,7 @@ export default function SettingsScreen() {
         imageApiKey: imageApiKey.trim(),
         imageApiUrl: imageApiUrl.trim(),
         imageModel: imageModel.trim(),
+        imageSize: imageSize.trim(),
       });
       Alert.alert("成功", "图片生成配置已保存");
     } catch {
@@ -316,6 +344,21 @@ export default function SettingsScreen() {
               value={imageModel}
               onChangeText={setImageModel}
               placeholder="black-forest-labs/FLUX.1-schnell"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Size（可选）</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={imageSize}
+              onChangeText={setImageSize}
+              placeholder="例如: 1024x1024（留空则不传 size）"
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
               autoCorrect={false}
