@@ -53,6 +53,7 @@ describe("story-store", () => {
     expect(story.currentIndex).toBe(0);
     expect(story.imageGenerationStatus).toBe("idle");
     expect(story.imagePromptHistory).toEqual([]);
+    expect(story.summaryHistory).toEqual([]);
     expect(story.createdAt).toBeGreaterThan(0);
   });
 
@@ -82,6 +83,7 @@ describe("story-store", () => {
     expect(migrated).not.toBeNull();
     expect(migrated!.imageGenerationStatus).toBe("idle");
     expect(migrated!.imagePromptHistory).toEqual([]);
+    expect(migrated!.summaryHistory).toEqual([]);
   });
 
   it("retrieves a story by id", async () => {

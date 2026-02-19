@@ -36,6 +36,7 @@ import {
   type CharacterCard,
   type DiceResult,
   type ImagePromptRecord,
+  type StorySummaryRecord,
 } from "@/lib/story-store";
 import {
   generateStory,
@@ -108,6 +109,8 @@ export default function GameScreen() {
   >(undefined);
   const [showCustomInputModal, setShowCustomInputModal] = useState(false);
   const [showCharacterCards, setShowCharacterCards] = useState(false);
+  const [showPromptHistory, setShowPromptHistory] = useState(false);
+  const [showSummaryHistory, setShowSummaryHistory] = useState(false);
   const [editingCard, setEditingCard] = useState<CharacterCard | null>(null);
   const [editPersonality, setEditPersonality] = useState("");
   const [editBackground, setEditBackground] = useState("");
@@ -228,10 +231,38 @@ export default function GameScreen() {
     }
   }
 
+  function generateLocalId(): string {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  function getCharacterDisplayName(card: CharacterCard): string {
+    if (card.isNameRevealed) return card.name;
+    return card.hiddenName?.trim() || "陌生人";
+  }
+
+  function addSummaryRecord(targetStory: Story, summary: string) {
+    const trimmed = summary.trim();
+    if (!trimmed) return;
+    const latest = targetStory.summaryHistory?.[0]?.summary?.trim();
+    if (latest && latest === trimmed) return;
+    if (!targetStory.summaryHistory) targetStory.summaryHistory = [];
+    const record: StorySummaryRecord = {
+      id: generateLocalId(),
+      summary: trimmed,
+      createdAt: Date.now(),
+    };
+    targetStory.summaryHistory = [record, ...targetStory.summaryHistory].slice(
+      0,
+      50,
+    );
+  }
+
   function processNewCharacters(
     s: Story,
     newCharacters?: {
       name: string;
+      hiddenName?: string;
+      knownToPlayer?: boolean;
       gender: string;
       personality: string;
       background: string;
@@ -239,11 +270,31 @@ export default function GameScreen() {
   ) {
     if (!newCharacters || newCharacters.length === 0) return;
     for (const nc of newCharacters) {
-      const exists = s.characterCards.some((c) => c.name === nc.name);
-      if (!exists) {
+      const hiddenName = nc.hiddenName?.trim() || "陌生人";
+      const reveal =
+        typeof nc.knownToPlayer === "boolean" ? nc.knownToPlayer : true;
+      const exact = s.characterCards.find((c) => c.name === nc.name);
+      const legacyAlias =
+        exact ||
+        s.characterCards.find(
+          (c) =>
+            !c.isNameRevealed &&
+            (c.name === hiddenName || c.hiddenName === hiddenName),
+        );
+
+      if (legacyAlias) {
+        legacyAlias.name = nc.name;
+        legacyAlias.hiddenName = legacyAlias.hiddenName || hiddenName;
+        legacyAlias.isNameRevealed = legacyAlias.isNameRevealed || reveal;
+        legacyAlias.gender = nc.gender || legacyAlias.gender;
+        legacyAlias.personality = nc.personality || legacyAlias.personality;
+        legacyAlias.background = nc.background || legacyAlias.background;
+      } else {
         s.characterCards.push({
-          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+          id: generateLocalId(),
           name: nc.name,
+          hiddenName,
+          isNameRevealed: reveal,
           gender: nc.gender,
           personality: nc.personality,
           background: nc.background,
@@ -274,6 +325,10 @@ export default function GameScreen() {
 
   async function handleGenerateImage() {
     if (!story || imageGenerating) return;
+    if (generating) {
+      Alert.alert("请稍候", "剧情生成进行中，请等待完成后再生图");
+      return;
+    }
 
     const config = await getImageConfig();
     if (!config.imageApiUrl || !config.imageModel) {
@@ -293,6 +348,7 @@ export default function GameScreen() {
       const summary = await summarizeStory({ history: story.historyContext });
       if (summary) {
         story.storySummary = summary;
+        addSummaryRecord(story, summary);
       }
 
       const promptSource = summary || story.historyContext;
@@ -352,12 +408,7 @@ export default function GameScreen() {
   function renderImagePromptHistorySection() {
     const promptHistory = story?.imagePromptHistory ?? [];
     return (
-      <View
-        style={[styles.promptHistorySection, { borderTopColor: colors.border }]}
-      >
-        <Text style={[styles.promptHistoryTitle, { color: colors.foreground }]}>
-          历史生图提示词
-        </Text>
+      <View style={styles.promptHistorySection}>
         {promptHistory.length === 0 ? (
           <Text style={[styles.promptHistoryEmpty, { color: colors.muted }]}>
             暂无生图记录
@@ -416,6 +467,38 @@ export default function GameScreen() {
     );
   }
 
+  function renderSummaryHistorySection() {
+    const summaryHistory = story?.summaryHistory ?? [];
+    return (
+      <View style={styles.promptHistorySection}>
+        {summaryHistory.length === 0 ? (
+          <Text style={[styles.promptHistoryEmpty, { color: colors.muted }]}>
+            暂无总结记录
+          </Text>
+        ) : (
+          summaryHistory.map((item) => (
+            <View
+              key={item.id}
+              style={[styles.promptHistoryItem, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.promptHistoryTime, { color: colors.muted }]}>
+                {formatPromptTime(item.createdAt)}
+              </Text>
+              <Text
+                style={[
+                  styles.promptHistoryPrompt,
+                  { color: colors.foreground, lineHeight: 20 },
+                ]}
+              >
+                {item.summary}
+              </Text>
+            </View>
+          ))
+        )}
+      </View>
+    );
+  }
+
   // Advance to next segment
   function handleTap() {
     if (!story || !currentSegment) return;
@@ -436,6 +519,10 @@ export default function GameScreen() {
   // Handle player choice — with dice mechanics
   async function handleChoice(choiceText: string, choiceIndex?: number) {
     if (!story || generating) return;
+    if (imageGenerating) {
+      Alert.alert("请稍候", "生图进行中，请等待完成后再继续剧情");
+      return;
+    }
     setCustomInput("");
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -447,27 +534,34 @@ export default function GameScreen() {
       return;
     }
 
-    // Determine judgment value
-    let judgmentValue = 4;
-    if (
-      choiceIndex !== undefined &&
-      currentSegment?.judgmentValues?.[choiceIndex]
-    ) {
-      judgmentValue = currentSegment.judgmentValues[choiceIndex];
-    } else if (choiceIndex === undefined) {
-      // Custom action — ask AI to evaluate
+    // Determine judgment value — null means no dice check needed
+    let judgmentValue: number | null = null;
+    if (choiceIndex !== undefined) {
+      // Preset choice: use the LLM-assigned value (may be null = no check)
+      const val = currentSegment?.judgmentValues?.[choiceIndex];
+      judgmentValue = typeof val === "number" ? val : null;
+    } else {
+      // Custom action — always requires dice check, ask AI to evaluate
       try {
         setGenerating(true);
         judgmentValue = await evaluateCustomAction(
           choiceText,
           story.historyContext,
           story.difficulty,
+          story.protagonistName,
+          story.protagonistDescription,
         );
       } catch {
         judgmentValue = 4;
       } finally {
         setGenerating(false);
       }
+    }
+
+    // If no judgment value, skip dice and proceed directly
+    if (judgmentValue === null) {
+      await proceedWithChoice(choiceText);
+      return;
     }
 
     // Roll dice and show animation
@@ -560,6 +654,7 @@ export default function GameScreen() {
             });
             if (summary) {
               story.storySummary = summary;
+              addSummaryRecord(story, summary);
             }
           } catch (summaryErr) {
             console.warn("Summary generation failed:", summaryErr);
@@ -652,7 +747,7 @@ export default function GameScreen() {
                   },
                 ]}
                 activeOpacity={0.8}
-                disabled={imageGenerating}
+                disabled={imageGenerating || generating}
               >
                 {imageGenerating ? (
                   <ActivityIndicator
@@ -810,7 +905,8 @@ export default function GameScreen() {
                             {choice}
                           </Text>
                           {story?.difficulty !== "无随机" &&
-                            currentSegment.judgmentValues?.[idx] && (
+                            typeof currentSegment.judgmentValues?.[idx] ===
+                              "number" && (
                               <Text
                                 style={[
                                   styles.judgmentBadge,
@@ -914,6 +1010,40 @@ export default function GameScreen() {
               />
               <Text style={[styles.menuItemText, { color: colors.foreground }]}>
                 角色卡片 ({story?.characterCards?.length ?? 0})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setShowMenu(false);
+                setShowSummaryHistory(true);
+              }}
+              style={[styles.menuItem, { borderBottomColor: colors.border }]}
+              activeOpacity={0.7}
+            >
+              <IconSymbol
+                name="text.bubble.fill"
+                size={20}
+                color={colors.foreground}
+              />
+              <Text style={[styles.menuItemText, { color: colors.foreground }]}>
+                故事总结 ({story?.summaryHistory?.length ?? 0})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setShowMenu(false);
+                setShowPromptHistory(true);
+              }}
+              style={[styles.menuItem, { borderBottomColor: colors.border }]}
+              activeOpacity={0.7}
+            >
+              <IconSymbol
+                name="photo.on.rectangle"
+                size={20}
+                color={colors.foreground}
+              />
+              <Text style={[styles.menuItemText, { color: colors.foreground }]}>
+                历史生图提示词 ({story?.imagePromptHistory?.length ?? 0})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -1102,7 +1232,6 @@ export default function GameScreen() {
             data={story?.characterCards ?? []}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.historyList}
-            ListFooterComponent={renderImagePromptHistorySection}
             ListEmptyComponent={
               <Text style={[styles.emptyText, { color: colors.muted }]}>
                 暂无角色卡片，随着剧情推进会自动生成
@@ -1119,7 +1248,7 @@ export default function GameScreen() {
                       <Text
                         style={[styles.cardCharName, { color: colors.primary }]}
                       >
-                        {item.name}
+                        {getCharacterDisplayName(item)}
                       </Text>
                       <Text
                         style={[
@@ -1222,7 +1351,7 @@ export default function GameScreen() {
                       <Text
                         style={[styles.cardCharName, { color: colors.primary }]}
                       >
-                        {item.name}
+                        {getCharacterDisplayName(item)}
                       </Text>
                       <Text
                         style={[
@@ -1264,7 +1393,7 @@ export default function GameScreen() {
                         onPress={() => {
                           Alert.alert(
                             "删除角色",
-                            `确定删除「${item.name}」的角色卡片吗？`,
+                            `确定删除「${getCharacterDisplayName(item)}」的角色卡片吗？`,
                             [
                               { text: "取消", style: "cancel" },
                               {
@@ -1299,6 +1428,53 @@ export default function GameScreen() {
       </Modal>
 
       {/* History Modal */}
+      <Modal visible={showPromptHistory} transparent animationType="slide">
+        <View
+          style={[styles.historyModal, { backgroundColor: colors.background }]}
+        >
+          <View
+            style={[styles.historyHeader, { borderBottomColor: colors.border }]}
+          >
+            <Text style={[styles.historyTitle, { color: colors.foreground }]}>
+              历史生图提示词
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowPromptHistory(false)}
+              activeOpacity={0.7}
+            >
+              <IconSymbol name="xmark" size={24} color={colors.foreground} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.historyList}>
+            {renderImagePromptHistorySection()}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={showSummaryHistory} transparent animationType="slide">
+        <View
+          style={[styles.historyModal, { backgroundColor: colors.background }]}
+        >
+          <View
+            style={[styles.historyHeader, { borderBottomColor: colors.border }]}
+          >
+            <Text style={[styles.historyTitle, { color: colors.foreground }]}>
+              故事总结
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowSummaryHistory(false)}
+              activeOpacity={0.7}
+            >
+              <IconSymbol name="xmark" size={24} color={colors.foreground} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.historyList}>
+            {renderSummaryHistorySection()}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* History Modal */}
       <Modal visible={showHistory} transparent animationType="slide">
         <View
           style={[styles.historyModal, { backgroundColor: colors.background }]}
@@ -1320,7 +1496,6 @@ export default function GameScreen() {
             data={story?.segments.slice(0, viewIndex + 1) ?? []}
             keyExtractor={(_, idx) => idx.toString()}
             contentContainerStyle={styles.historyList}
-            ListFooterComponent={renderImagePromptHistorySection}
             renderItem={({ item }) => (
               <View
                 style={[
@@ -1713,10 +1888,8 @@ const styles = StyleSheet.create({
     marginTop: 40,
   },
   promptHistorySection: {
-    marginTop: 16,
-    borderTopWidth: 0.5,
-    paddingTop: 12,
     gap: 8,
+    paddingTop: 2,
   },
   promptHistoryTitle: {
     fontSize: 14,
@@ -1729,7 +1902,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 10,
     padding: 10,
-    gap: 6,
+    gap: 8,
   },
   promptHistoryMeta: {
     flexDirection: "row",

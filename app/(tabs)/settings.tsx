@@ -380,7 +380,7 @@ export default function SettingsScreen() {
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.cardRow}>
               <Text style={[styles.cardLabel, { color: colors.foreground }]}>应用名称</Text>
-              <Text style={[styles.cardValue, { color: colors.muted }]}>AI剧情物语</Text>
+              <Text style={[styles.cardValue, { color: colors.muted }]}>AIourStory</Text>
             </View>
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             <View style={styles.cardRow}>

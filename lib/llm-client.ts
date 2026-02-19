@@ -78,6 +78,8 @@ const RANDOM_GENRE_POOL = [
 
 export interface NewCharacterData {
   name: string;
+  hiddenName?: string;
+  knownToPlayer?: boolean;
   gender: string;
   personality: string;
   background: string;
@@ -520,11 +522,14 @@ function parseLLMResponse(content: string): LLMResponse {
         if (Array.isArray(segment.judgmentValues)) {
           // Ensure length matches choices
           if (segment.judgmentValues.length !== segment.choices.length) {
-            segment.judgmentValues = segment.choices.map(() => 4);
+            segment.judgmentValues = segment.choices.map(() => null);
           }
-          // Clamp values to 1-8
-          segment.judgmentValues = segment.judgmentValues.map((v: number) =>
-            Math.max(1, Math.min(8, Math.round(v || 4))),
+          // Clamp numeric values to 1-8, keep null as-is
+          segment.judgmentValues = segment.judgmentValues.map(
+            (v: number | null) =>
+              v === null || v === undefined
+                ? null
+                : Math.max(1, Math.min(8, Math.round(v))),
           );
         }
         // judgmentValues may be absent in 无随机 mode — that's fine
@@ -545,10 +550,17 @@ function parseLLMResponse(content: string): LLMResponse {
     const newCharacters: NewCharacterData[] = Array.isArray(
       parsed.newCharacters,
     )
-      ? parsed.newCharacters.filter(
-          (c: NewCharacterData) =>
-            c.name && c.gender && c.personality && c.background,
-        )
+      ? parsed.newCharacters
+          .filter(
+            (c: NewCharacterData) =>
+              c.name && c.gender && c.personality && c.background,
+          )
+          .map((c: NewCharacterData) => ({
+            ...c,
+            hiddenName: c.hiddenName?.trim() || "陌生人",
+            knownToPlayer:
+              typeof c.knownToPlayer === "boolean" ? c.knownToPlayer : true,
+          }))
       : [];
 
     return { segments: normalizedSegments, newCharacters };
@@ -567,6 +579,8 @@ export async function evaluateCustomAction(
   action: string,
   history: string,
   difficulty: DifficultyLevel,
+  protagonistName?: string,
+  protagonistDescription?: string,
 ): Promise<number> {
   const config = await getLLMConfig();
 
@@ -589,7 +603,7 @@ export async function evaluateCustomAction(
         { role: "system", content: EVALUATE_ACTION_SYSTEM_PROMPT },
         {
           role: "user",
-          content: `${buildDifficultyContext(difficulty)}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n请评估该行动的判定值（1-8），只输出数字。`,
+          content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n请结合主角的性格与能力评估该行动的判定值（1-8），只输出数字。`,
         },
       ],
       temperature: 0.3,

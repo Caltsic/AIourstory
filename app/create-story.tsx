@@ -141,6 +141,11 @@ export default function CreateStoryScreen() {
                   Date.now().toString(36) +
                   Math.random().toString(36).slice(2, 8),
                 name: nc.name,
+                hiddenName: nc.hiddenName?.trim() || "陌生人",
+                isNameRevealed:
+                  typeof nc.knownToPlayer === "boolean"
+                    ? nc.knownToPlayer
+                    : true,
                 gender: nc.gender,
                 personality: nc.personality,
                 background: nc.background,

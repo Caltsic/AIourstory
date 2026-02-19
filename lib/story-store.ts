@@ -17,7 +17,12 @@ export interface DiceResult {
 
 export interface CharacterCard {
   id: string;
+  /** Real name provided by LLM, may be hidden in UI before reveal */
   name: string;
+  /** Display alias before the protagonist learns the real name */
+  hiddenName: string;
+  /** Whether the protagonist has learned this character's real name */
+  isNameRevealed: boolean;
   gender: string;
   /** Detailed personality description — must be unique and specific */
   personality: string;
@@ -32,8 +37,8 @@ export interface StorySegment {
   character?: string;
   text: string;
   choices?: string[];
-  /** AI-assigned judgment values for each choice (1-8), parallel to choices[] */
-  judgmentValues?: number[];
+  /** AI-assigned judgment values for each choice (1-8) or null if no check needed, parallel to choices[] */
+  judgmentValues?: (number | null)[];
   /** Dice result attached to narration segments recording a player's choice */
   diceResult?: DiceResult;
 }
@@ -46,6 +51,12 @@ export interface ImagePromptRecord {
   createdAt: number;
   imageUri?: string;
   error?: string;
+}
+
+export interface StorySummaryRecord {
+  id: string;
+  summary: string;
+  createdAt: number;
 }
 
 export interface Story {
@@ -75,6 +86,8 @@ export interface Story {
   lastImageGenerationAt?: number;
   /** History of generated image prompts and outcomes */
   imagePromptHistory: ImagePromptRecord[];
+  /** History of generated story summaries */
+  summaryHistory: StorySummaryRecord[];
   /** Difficulty setting for dice mechanics */
   difficulty: DifficultyLevel;
   /** Character cards for named NPCs */
@@ -133,8 +146,16 @@ async function saveStoryIds(ids: string[]): Promise<void> {
 function migrateStory(story: Story): Story {
   if (!story.difficulty) story.difficulty = "普通";
   if (!story.characterCards) story.characterCards = [];
+  story.characterCards = story.characterCards.map((card) => ({
+    ...card,
+    hiddenName: card.hiddenName || card.name || "陌生人",
+    isNameRevealed:
+      card.isNameRevealed ??
+      !/(陌生|神秘|无名|未知|男人|女人|来客|路人)/.test(card.name),
+  }));
   if (!story.imageGenerationStatus) story.imageGenerationStatus = "idle";
   if (!story.imagePromptHistory) story.imagePromptHistory = [];
+  if (!story.summaryHistory) story.summaryHistory = [];
   return story;
 }
 
@@ -181,6 +202,7 @@ export async function createStory(
     storySummary: "",
     imageGenerationStatus: "idle",
     imagePromptHistory: [],
+    summaryHistory: [],
     difficulty,
     characterCards: [],
   };
