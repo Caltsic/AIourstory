@@ -11,10 +11,20 @@ const API_KEY_KEY = 'user_api_key';
 const API_URL_KEY = 'user_api_url';
 const MODEL_KEY = 'user_model';
 
+const IMAGE_API_KEY_KEY = 'user_image_api_key';
+const IMAGE_API_URL_KEY = 'user_image_api_url';
+const IMAGE_MODEL_KEY = 'user_image_model';
+
 export interface StorageConfig {
   apiKey: string | null;
   apiUrl: string;
   model: string;
+}
+
+export interface ImageStorageConfig {
+  imageApiKey: string | null;
+  imageApiUrl: string;
+  imageModel: string;
 }
 
 /**
@@ -64,6 +74,50 @@ export async function saveStorageConfig(config: {
     await SecureStore.setItemAsync(API_KEY_KEY, config.apiKey);
     await SecureStore.setItemAsync(API_URL_KEY, config.apiUrl);
     await SecureStore.setItemAsync(MODEL_KEY, config.model);
+  }
+}
+
+/**
+ * 获取图片生成 API 配置
+ */
+export async function getImageStorageConfig(): Promise<ImageStorageConfig> {
+  if (Platform.OS === 'web') {
+    const imageApiKey = await AsyncStorage.getItem(IMAGE_API_KEY_KEY);
+    const imageApiUrl = await AsyncStorage.getItem(IMAGE_API_URL_KEY);
+    const imageModel = await AsyncStorage.getItem(IMAGE_MODEL_KEY);
+    return {
+      imageApiKey: imageApiKey || null,
+      imageApiUrl: imageApiUrl || '',
+      imageModel: imageModel || '',
+    };
+  } else {
+    const imageApiKey = await SecureStore.getItemAsync(IMAGE_API_KEY_KEY);
+    const imageApiUrl = await SecureStore.getItemAsync(IMAGE_API_URL_KEY);
+    const imageModel = await SecureStore.getItemAsync(IMAGE_MODEL_KEY);
+    return {
+      imageApiKey: imageApiKey || null,
+      imageApiUrl: imageApiUrl || '',
+      imageModel: imageModel || '',
+    };
+  }
+}
+
+/**
+ * 保存图片生成 API 配置
+ */
+export async function saveImageStorageConfig(config: {
+  imageApiKey: string;
+  imageApiUrl: string;
+  imageModel: string;
+}): Promise<void> {
+  if (Platform.OS === 'web') {
+    await AsyncStorage.setItem(IMAGE_API_KEY_KEY, config.imageApiKey);
+    await AsyncStorage.setItem(IMAGE_API_URL_KEY, config.imageApiUrl);
+    await AsyncStorage.setItem(IMAGE_MODEL_KEY, config.imageModel);
+  } else {
+    await SecureStore.setItemAsync(IMAGE_API_KEY_KEY, config.imageApiKey);
+    await SecureStore.setItemAsync(IMAGE_API_URL_KEY, config.imageApiUrl);
+    await SecureStore.setItemAsync(IMAGE_MODEL_KEY, config.imageModel);
   }
 }
 

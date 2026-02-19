@@ -12,6 +12,7 @@ import {
   FlatList,
   Alert,
   KeyboardAvoidingView,
+  ImageBackground,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -33,7 +34,8 @@ import {
   type Story,
   type StorySegment,
 } from "@/lib/story-store";
-import { generateStory, continueStory, summarizeStory, getLLMConfig } from "@/lib/llm-client";
+import { generateStory, continueStory, summarizeStory, generateImagePrompt, getLLMConfig } from "@/lib/llm-client";
+import { generateImage } from "@/lib/image-client";
 
 // ─── Typewriter Hook ─────────────────────────────────────────────────
 
@@ -89,6 +91,7 @@ export default function GameScreen() {
   const [showMenu, setShowMenu] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [customInput, setCustomInput] = useState("");
+  const [backgroundImageUri, setBackgroundImageUri] = useState<string | undefined>(undefined);
 
   // Current segment being displayed
   const [viewIndex, setViewIndex] = useState(0);
@@ -116,6 +119,9 @@ export default function GameScreen() {
       return;
     }
     setStory(s);
+    if (s.backgroundImageUri) {
+      setBackgroundImageUri(s.backgroundImageUri);
+    }
     if (s.segments.length === 0) {
       // Check API config before generating
       const config = await getLLMConfig();
@@ -218,13 +224,25 @@ export default function GameScreen() {
         // Increment choice counter
         story.choiceCount = (story.choiceCount ?? 0) + 1;
 
-        // Every 5 choices, generate a summary to keep context fresh
+        // Every 5 choices, generate a summary and a background image
         if (story.choiceCount % 5 === 0) {
           try {
             await updateStory(story); // save first so historyContext is fresh
             const summary = await summarizeStory({ history: story.historyContext });
             if (summary) {
               story.storySummary = summary;
+              // Fire-and-forget: generate background image asynchronously
+              const storyRef = story;
+              generateImagePrompt(summary)
+                .then((imgPrompt) => generateImage(imgPrompt))
+                .then((uri) => {
+                  storyRef.backgroundImageUri = uri;
+                  updateStory(storyRef).catch(() => {});
+                  setBackgroundImageUri(uri);
+                })
+                .catch((imgErr) => {
+                  console.warn("Background image generation failed:", imgErr);
+                });
             }
           } catch (summaryErr) {
             console.warn("Summary generation failed:", summaryErr);
@@ -270,7 +288,15 @@ export default function GameScreen() {
     <ScreenContainer edges={["top", "bottom", "left", "right"]}>
       <View style={styles.flex}>
         {/* Scene Area */}
-        <View style={[styles.sceneArea, { backgroundColor: colors.background }]}>
+        <ImageBackground
+          source={backgroundImageUri ? { uri: backgroundImageUri } : undefined}
+          style={[styles.sceneArea, !backgroundImageUri && { backgroundColor: colors.background }]}
+          imageStyle={styles.sceneBackgroundImage}
+        >
+          {/* Dark overlay when image is showing */}
+          {backgroundImageUri && (
+            <View style={styles.sceneOverlay} />
+          )}
           {/* Top bar */}
           <View style={styles.topBar}>
             <TouchableOpacity
@@ -278,9 +304,9 @@ export default function GameScreen() {
               style={styles.topBarButton}
               activeOpacity={0.7}
             >
-              <IconSymbol name="arrow.left" size={22} color={colors.foreground} />
+              <IconSymbol name="arrow.left" size={22} color={backgroundImageUri ? "#fff" : colors.foreground} />
             </TouchableOpacity>
-            <Text style={[styles.storyTitle, { color: colors.foreground }]} numberOfLines={1}>
+            <Text style={[styles.storyTitle, { color: backgroundImageUri ? "#fff" : colors.foreground }]} numberOfLines={1}>
               {story?.title}
             </Text>
             <TouchableOpacity
@@ -288,7 +314,7 @@ export default function GameScreen() {
               style={styles.topBarButton}
               activeOpacity={0.7}
             >
-              <IconSymbol name="ellipsis" size={22} color={colors.foreground} />
+              <IconSymbol name="ellipsis" size={22} color={backgroundImageUri ? "#fff" : colors.foreground} />
             </TouchableOpacity>
           </View>
 
@@ -298,7 +324,7 @@ export default function GameScreen() {
             <View style={[styles.sceneDot, { backgroundColor: colors.primary + "40" }]} />
             <View style={[styles.sceneLine2, { backgroundColor: colors.primary + "15" }]} />
           </View>
-        </View>
+        </ImageBackground>
 
         {/* Dialogue Area */}
         <TouchableOpacity
@@ -745,5 +771,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+  sceneBackgroundImage: {
+    resizeMode: "cover",
+  },
+  sceneOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.45)",
   },
 });

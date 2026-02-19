@@ -3,7 +3,7 @@
  * 直接调用 OpenAI 兼容的 API，无需后端
  */
 
-import { STORY_SYSTEM_PROMPT, CONTINUE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT } from './llm-prompts';
+import { STORY_SYSTEM_PROMPT, CONTINUE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT, RANDOMIZE_SYSTEM_PROMPT, IMAGE_PROMPT_SYSTEM_PROMPT } from './llm-prompts';
 import { getStorageConfig, saveStorageConfig, clearStorageConfig, type StorageConfig } from './storage';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -40,6 +40,14 @@ export interface ContinueStoryParams {
 
 export interface SummarizeStoryParams {
   history: string;
+}
+
+export interface RandomStoryConfig {
+  title: string;
+  genre: string;
+  protagonistName: string;
+  protagonistDescription: string;
+  premise: string;
 }
 
 export interface LLMResponse {
@@ -235,6 +243,92 @@ export async function summarizeStory(params: SummarizeStoryParams): Promise<stri
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`摘要生成失败: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices[0]?.message?.content?.trim() ?? '';
+}
+
+/**
+ * 随机生成故事设定
+ */
+export async function randomizeStory(): Promise<RandomStoryConfig> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error('请先在设置中配置 API Key');
+  }
+
+  const url = config.apiUrl.includes('/chat/completions') ? config.apiUrl : `${config.apiUrl}/chat/completions`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: 'system', content: RANDOMIZE_SYSTEM_PROMPT },
+        { role: 'user', content: '请随机生成一套故事设定。' },
+      ],
+      temperature: 1.0,
+      max_tokens: 600,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`随机生成失败: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content ?? '';
+
+  try {
+    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('无法解析返回内容');
+    const parsed = JSON.parse(jsonMatch[1] ?? jsonMatch[0]) as RandomStoryConfig;
+    if (!parsed.title || !parsed.premise || !parsed.protagonistName) {
+      throw new Error('返回字段不完整');
+    }
+    return parsed;
+  } catch {
+    throw new Error('AI 返回的设定格式不正确，请重试');
+  }
+}
+
+/**
+ * 根据剧情摘要生成图片提示词（英文）
+ */
+export async function generateImagePrompt(summary: string): Promise<string> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error('请先在设置中配置 API Key');
+  }
+
+  const url = config.apiUrl.includes('/chat/completions') ? config.apiUrl : `${config.apiUrl}/chat/completions`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: 'system', content: IMAGE_PROMPT_SYSTEM_PROMPT },
+        { role: 'user', content: `剧情摘要：\n${summary}` },
+      ],
+      temperature: 0.7,
+      max_tokens: 200,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`图片提示词生成失败: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();

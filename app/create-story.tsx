@@ -17,7 +17,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { createStory, updateStory } from "@/lib/story-store";
-import { generateStory, getLLMConfig } from "@/lib/llm-client";
+import { generateStory, randomizeStory, getLLMConfig } from "@/lib/llm-client";
 
 const GENRES = [
   { label: "奇幻冒险", emoji: "⚔️" },
@@ -37,6 +37,39 @@ export default function CreateStoryScreen() {
   const [protagonistName, setProtagonistName] = useState("");
   const [protagonistDescription, setProtagonistDescription] = useState("");
   const [creating, setCreating] = useState(false);
+  const [randomizing, setRandomizing] = useState(false);
+
+  async function handleRandomize() {
+    if (randomizing || creating) return;
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    const config = await getLLMConfig();
+    if (!config.apiKey) {
+      Alert.alert(
+        "未配置 API",
+        "请先在设置中配置 AI API Key 才能使用随机功能",
+        [
+          { text: "取消", style: "cancel" },
+          { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
+        ]
+      );
+      return;
+    }
+    setRandomizing(true);
+    try {
+      const result = await randomizeStory();
+      setTitle(result.title);
+      setGenre(result.genre);
+      setProtagonistName(result.protagonistName);
+      setProtagonistDescription(result.protagonistDescription);
+      setPremise(result.premise);
+    } catch (err) {
+      Alert.alert("随机失败", err instanceof Error ? err.message : "未知错误");
+    } finally {
+      setRandomizing(false);
+    }
+  }
 
   const canCreate =
     title.trim().length > 0 &&
@@ -112,7 +145,21 @@ export default function CreateStoryScreen() {
             <IconSymbol name="arrow.left" size={24} color={colors.foreground} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>创建新故事</Text>
-          <View style={styles.headerSpacer} />
+          <TouchableOpacity
+            onPress={handleRandomize}
+            disabled={randomizing || creating}
+            style={styles.randomButton}
+            activeOpacity={0.7}
+          >
+            {randomizing ? (
+              <Text style={[styles.randomButtonText, { color: colors.primary }]}>生成中</Text>
+            ) : (
+              <>
+                <IconSymbol name="dice" size={18} color={colors.primary} />
+                <Text style={[styles.randomButtonText, { color: colors.primary }]}>随机</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -313,7 +360,17 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
   },
-  headerSpacer: { width: 32 },
+  randomButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    padding: 4,
+    minWidth: 32,
+  },
+  randomButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
   scrollContent: {
     padding: 20,
     paddingBottom: 40,

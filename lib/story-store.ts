@@ -30,6 +30,8 @@ export interface Story {
   choiceCount: number;
   /** AI-generated summary of story so far, used to compress long history */
   storySummary: string;
+  /** URI of the current background image (base64 data URI or remote URL) */
+  backgroundImageUri?: string;
 }
 
 // ─── Storage Keys ────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLLMConfig, saveLLMConfig, testAPIKey } from "@/lib/llm-client";
+import { getImageConfig, saveImageConfig } from "@/lib/image-client";
 
 // 预设的 API 配置
 const API_PRESETS = [
@@ -34,13 +35,18 @@ const API_PRESETS = [
 export default function SettingsScreen() {
   const colors = useColors();
   
-  // API 配置状态
+  // AI API 配置状态
   const [apiKey, setApiKey] = useState("");
   const [apiUrl, setApiUrl] = useState("");
   const [model, setModel] = useState("");
   const [selectedPreset, setSelectedPreset] = useState(3); // 默认为自定义
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [testing, setTesting] = useState(false);
+
+  // 图片生成 API 配置状态
+  const [imageApiKey, setImageApiKey] = useState("");
+  const [imageApiUrl, setImageApiUrl] = useState("");
+  const [imageModel, setImageModel] = useState("");
 
   // 加载保存的配置
   useEffect(() => {
@@ -53,16 +59,37 @@ export default function SettingsScreen() {
       setApiKey(config.apiKey || "");
       setApiUrl(config.apiUrl);
       setModel(config.model);
-      
-      // 检查是否匹配预设
+
       const presetIndex = API_PRESETS.findIndex(
         p => p.apiUrl === config.apiUrl && p.model === config.model
       );
       if (presetIndex >= 0) {
         setSelectedPreset(presetIndex);
       }
+
+      const imgConfig = await getImageConfig();
+      setImageApiKey(imgConfig.imageApiKey || "");
+      setImageApiUrl(imgConfig.imageApiUrl);
+      setImageModel(imgConfig.imageModel);
     } catch (error) {
       console.error("Failed to load config:", error);
+    }
+  }
+
+  async function handleSaveImageConfig() {
+    if (!imageApiUrl.trim() || !imageModel.trim()) {
+      Alert.alert("错误", "请填写图片 API URL 和模型名称");
+      return;
+    }
+    try {
+      await saveImageConfig({
+        imageApiKey: imageApiKey.trim(),
+        imageApiUrl: imageApiUrl.trim(),
+        imageModel: imageModel.trim(),
+      });
+      Alert.alert("成功", "图片生成配置已保存");
+    } catch {
+      Alert.alert("错误", "保存失败");
     }
   }
 
@@ -241,6 +268,65 @@ export default function SettingsScreen() {
               <Text style={styles.primaryButtonText}>保存配置</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Image Generation Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>图片生成配置</Text>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>API Key</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={imageApiKey}
+              onChangeText={setImageApiKey}
+              placeholder="图片生成服务的 API Key"
+              placeholderTextColor={colors.muted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>API URL</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={imageApiUrl}
+              onChangeText={setImageApiUrl}
+              placeholder="https://api.siliconflow.cn/v1"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>模型</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={imageModel}
+              onChangeText={setImageModel}
+              placeholder="black-forest-labs/FLUX.1-schnell"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <TouchableOpacity
+            onPress={handleSaveImageConfig}
+            style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+          >
+            <IconSymbol name="checkmark" size={18} color="#fff" />
+            <Text style={styles.primaryButtonText}>保存图片配置</Text>
+          </TouchableOpacity>
         </View>
 
         {/* About Section */}

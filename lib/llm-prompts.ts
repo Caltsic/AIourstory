@@ -59,3 +59,29 @@ export const CONTINUE_SYSTEM_PROMPT = `你是一个专业的视觉小说/Galgame
 export const SUMMARY_SYSTEM_PROMPT = `你是一个剧情总结助手。请将提供的视觉小说剧情历史总结成200字以内的简明摘要。
 要求：保留关键事件、重要角色关系、玩家做出的关键选择和当前故事状态。
 只输出摘要正文，不要输出任何其他内容。`;
+
+export const IMAGE_PROMPT_SYSTEM_PROMPT = `你是一个专业的 AI 绘画提示词工程师。根据提供的视觉小说剧情摘要，生成一段英文图片生成提示词，用于生成故事场景背景图。
+
+要求：
+1. 只输出英文提示词，不要输出任何中文或解释
+2. 描述场景环境、光线、氛围，不要包含人物
+3. 风格为精美视觉小说背景插图，高质量，细节丰富
+4. 长度控制在 50 词以内
+5. 末尾附加：visual novel background, concept art, high quality, detailed, cinematic lighting`;
+
+export const RANDOMIZE_SYSTEM_PROMPT = `你是一个创意故事设定生成器。请随机生成一套完整、有趣的视觉小说故事设定。
+
+你必须严格按照以下JSON格式输出，不要输出任何其他内容：
+{
+  "title": "故事标题（10字以内，有吸引力）",
+  "genre": "故事风格（必须从以下选项中选一个：奇幻冒险、校园日常、悬疑推理、科幻未来、古风仙侠）",
+  "protagonistName": "主角姓名（2-4个汉字）",
+  "protagonistDescription": "主角简介（30字以内，描述性格特点或特殊背景）",
+  "premise": "故事开头（100-200字，描述世界观、开场场景和初始冲突，用第二人称"你"）"
+}
+
+要求：
+1. 每次生成的内容要新颖独特，避免俗套
+2. 各字段内容要相互呼应，构成完整的故事背景
+3. premise 要有代入感，末尾留有悬念
+4. 风格多样，可以是轻松的也可以是严肃的`;
