@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Text, View, TouchableOpacity, StyleSheet, Alert, TextInput, ScrollView, Modal } from "react-native";
+import Constants from "expo-constants";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -34,6 +35,7 @@ const API_PRESETS = [
 
 export default function SettingsScreen() {
   const colors = useColors();
+  const appVersion = Constants.expoConfig?.version ?? "1.0.1";
   
   // AI API 配置状态
   const [apiKey, setApiKey] = useState("");
@@ -340,7 +342,7 @@ export default function SettingsScreen() {
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             <View style={styles.cardRow}>
               <Text style={[styles.cardLabel, { color: colors.foreground }]}>版本</Text>
-              <Text style={[styles.cardValue, { color: colors.muted }]}>1.0.0</Text>
+              <Text style={[styles.cardValue, { color: colors.muted }]}>{appVersion}</Text>
             </View>
             <View style={[styles.divider, { backgroundColor: colors.border }]} />
             <View style={styles.cardRow}>

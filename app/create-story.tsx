@@ -16,7 +16,11 @@ import * as Haptics from "expo-haptics";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
-import { createStory, updateStory } from "@/lib/story-store";
+import {
+  createStory,
+  updateStory,
+  type DifficultyLevel,
+} from "@/lib/story-store";
 import { generateStory, randomizeStory, getLLMConfig } from "@/lib/llm-client";
 
 const GENRES = [
@@ -28,6 +32,15 @@ const GENRES = [
   { label: "自定义", emoji: "✨" },
 ];
 
+const DIFFICULTIES: { label: DifficultyLevel; desc: string; emoji: string }[] =
+  [
+    { label: "简单", desc: "失败轻微，成功丰厚", emoji: "😊" },
+    { label: "普通", desc: "平衡体验", emoji: "⚔️" },
+    { label: "困难", desc: "失败严重，成功有限", emoji: "💀" },
+    { label: "噩梦", desc: "极高风险，微薄回报", emoji: "☠️" },
+    { label: "无随机", desc: "无骰子判定", emoji: "📖" },
+  ];
+
 export default function CreateStoryScreen() {
   const router = useRouter();
   const colors = useColors();
@@ -36,6 +49,7 @@ export default function CreateStoryScreen() {
   const [genre, setGenre] = useState("奇幻冒险");
   const [protagonistName, setProtagonistName] = useState("");
   const [protagonistDescription, setProtagonistDescription] = useState("");
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>("普通");
   const [creating, setCreating] = useState(false);
   const [randomizing, setRandomizing] = useState(false);
 
@@ -52,7 +66,7 @@ export default function CreateStoryScreen() {
         [
           { text: "取消", style: "cancel" },
           { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
-        ]
+        ],
       );
       return;
     }
@@ -81,21 +95,17 @@ export default function CreateStoryScreen() {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    
+
     // Check API config before creating
     const config = await getLLMConfig();
     if (!config.apiKey) {
-      Alert.alert(
-        "未配置 API",
-        "请先在设置中配置 AI API Key 才能创建故事",
-        [
-          { text: "取消", style: "cancel" },
-          { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
-        ]
-      );
+      Alert.alert("未配置 API", "请先在设置中配置 AI API Key 才能创建故事", [
+        { text: "取消", style: "cancel" },
+        { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
+      ]);
       return;
     }
-    
+
     setCreating(true);
     try {
       // Create story entry first
@@ -104,7 +114,8 @@ export default function CreateStoryScreen() {
         premise.trim(),
         genre,
         protagonistName.trim(),
-        protagonistDescription.trim()
+        protagonistDescription.trim(),
+        difficulty,
       );
 
       // Generate initial story segments
@@ -114,17 +125,39 @@ export default function CreateStoryScreen() {
         genre: story.genre,
         protagonistName: story.protagonistName,
         protagonistDescription: story.protagonistDescription,
+        difficulty: story.difficulty,
       });
-      
+
       if (result.segments && result.segments.length > 0) {
         story.segments = result.segments;
         story.currentIndex = 0;
+        // Process new characters from initial generation
+        if (result.newCharacters && result.newCharacters.length > 0) {
+          for (const nc of result.newCharacters) {
+            const exists = story.characterCards.some((c) => c.name === nc.name);
+            if (!exists) {
+              story.characterCards.push({
+                id:
+                  Date.now().toString(36) +
+                  Math.random().toString(36).slice(2, 8),
+                name: nc.name,
+                gender: nc.gender,
+                personality: nc.personality,
+                background: nc.background,
+                firstAppearance: 0,
+              });
+            }
+          }
+        }
         await updateStory(story);
         router.replace({ pathname: "/game", params: { storyId: story.id } });
+      } else {
+        throw new Error("AI 未返回有效剧情，请稍后重试");
       }
     } catch (err) {
       console.error("Create failed:", err);
       Alert.alert("创建失败", err instanceof Error ? err.message : "未知错误");
+    } finally {
       setCreating(false);
     }
   }
@@ -144,7 +177,9 @@ export default function CreateStoryScreen() {
           >
             <IconSymbol name="arrow.left" size={24} color={colors.foreground} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>创建新故事</Text>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+            创建新故事
+          </Text>
           <TouchableOpacity
             onPress={handleRandomize}
             disabled={randomizing || creating}
@@ -152,11 +187,19 @@ export default function CreateStoryScreen() {
             activeOpacity={0.7}
           >
             {randomizing ? (
-              <Text style={[styles.randomButtonText, { color: colors.primary }]}>生成中</Text>
+              <Text
+                style={[styles.randomButtonText, { color: colors.primary }]}
+              >
+                生成中
+              </Text>
             ) : (
               <>
                 <IconSymbol name="dice" size={18} color={colors.primary} />
-                <Text style={[styles.randomButtonText, { color: colors.primary }]}>随机</Text>
+                <Text
+                  style={[styles.randomButtonText, { color: colors.primary }]}
+                >
+                  随机
+                </Text>
               </>
             )}
           </TouchableOpacity>
@@ -170,7 +213,9 @@ export default function CreateStoryScreen() {
         >
           {/* Title Input */}
           <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>故事标题</Text>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              故事标题
+            </Text>
             <TextInput
               style={[
                 styles.input,
@@ -191,14 +236,18 @@ export default function CreateStoryScreen() {
 
           {/* Protagonist Input */}
           <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>主角姓名</Text>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              主角姓名
+            </Text>
             <TextInput
               style={[
                 styles.input,
                 {
                   backgroundColor: colors.surface,
                   color: colors.foreground,
-                  borderColor: protagonistName.trim() ? colors.primary : colors.border,
+                  borderColor: protagonistName.trim()
+                    ? colors.primary
+                    : colors.border,
                 },
               ]}
               placeholder="你扮演的角色叫什么名字..."
@@ -211,7 +260,9 @@ export default function CreateStoryScreen() {
           </View>
 
           <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>主角简介</Text>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              主角简介
+            </Text>
             <Text style={[styles.hint, { color: colors.muted }]}>
               简要描述主角的性格或背景（选填）
             </Text>
@@ -238,7 +289,9 @@ export default function CreateStoryScreen() {
 
           {/* Genre Selection */}
           <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>故事风格</Text>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              故事风格
+            </Text>
             <View style={styles.genreGrid}>
               {GENRES.map((g) => {
                 const isSelected = genre === g.label;
@@ -257,7 +310,9 @@ export default function CreateStoryScreen() {
                         backgroundColor: isSelected
                           ? colors.primary + "25"
                           : colors.surface,
-                        borderColor: isSelected ? colors.primary : colors.border,
+                        borderColor: isSelected
+                          ? colors.primary
+                          : colors.border,
                       },
                     ]}
                     activeOpacity={0.7}
@@ -267,7 +322,9 @@ export default function CreateStoryScreen() {
                       style={[
                         styles.genreLabel,
                         {
-                          color: isSelected ? colors.primary : colors.foreground,
+                          color: isSelected
+                            ? colors.primary
+                            : colors.foreground,
                           fontWeight: isSelected ? "700" : "500",
                         },
                       ]}
@@ -280,9 +337,64 @@ export default function CreateStoryScreen() {
             </View>
           </View>
 
+          {/* Difficulty Selection */}
+          <View style={styles.section}>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              难度设定
+            </Text>
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              影响骰子判定结果的严厉程度
+            </Text>
+            <View style={styles.genreGrid}>
+              {DIFFICULTIES.map((d) => {
+                const isSelected = difficulty === d.label;
+                return (
+                  <TouchableOpacity
+                    key={d.label}
+                    onPress={() => {
+                      setDifficulty(d.label);
+                      if (Platform.OS !== "web") {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                    }}
+                    style={[
+                      styles.genreChip,
+                      {
+                        backgroundColor: isSelected
+                          ? colors.primary + "25"
+                          : colors.surface,
+                        borderColor: isSelected
+                          ? colors.primary
+                          : colors.border,
+                      },
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.genreEmoji}>{d.emoji}</Text>
+                    <Text
+                      style={[
+                        styles.genreLabel,
+                        {
+                          color: isSelected
+                            ? colors.primary
+                            : colors.foreground,
+                          fontWeight: isSelected ? "700" : "500",
+                        },
+                      ]}
+                    >
+                      {d.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
           {/* Premise Input */}
           <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>故事开头</Text>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              故事开头
+            </Text>
             <Text style={[styles.hint, { color: colors.muted }]}>
               描述故事的世界观、角色和开场场景，AI将据此生成剧情
             </Text>

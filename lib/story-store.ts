@@ -4,11 +4,38 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type SegmentType = "narration" | "dialogue" | "choice";
 
+export type DifficultyLevel = "简单" | "普通" | "困难" | "噩梦" | "无随机";
+
+export interface DiceResult {
+  /** Dice roll value (1-8) */
+  roll: number;
+  /** AI-assigned difficulty threshold (1-8) */
+  judgmentValue: number;
+  /** Outcome relative to judgment */
+  outcome: "worse" | "exact" | "better";
+}
+
+export interface CharacterCard {
+  id: string;
+  name: string;
+  gender: string;
+  /** Detailed personality description — must be unique and specific */
+  personality: string;
+  /** Background information */
+  background: string;
+  /** Segment index when character first appeared */
+  firstAppearance: number;
+}
+
 export interface StorySegment {
   type: SegmentType;
   character?: string;
   text: string;
   choices?: string[];
+  /** AI-assigned judgment values for each choice (1-8), parallel to choices[] */
+  judgmentValues?: number[];
+  /** Dice result attached to narration segments recording a player's choice */
+  diceResult?: DiceResult;
 }
 
 export interface Story {
@@ -32,6 +59,10 @@ export interface Story {
   storySummary: string;
   /** URI of the current background image (base64 data URI or remote URL) */
   backgroundImageUri?: string;
+  /** Difficulty setting for dice mechanics */
+  difficulty: DifficultyLevel;
+  /** Character cards for named NPCs */
+  characterCards: CharacterCard[];
 }
 
 // ─── Storage Keys ────────────────────────────────────────────────────
@@ -49,10 +80,15 @@ function generateId(): string {
  *  If a summary exists, prepend it and only include the most recent segments. */
 export function buildHistoryContext(segments: StorySegment[], storySummary = ""): string {
   const formatSegment = (s: StorySegment) => {
-    if (s.type === "narration") return `[旁白] ${s.text}`;
-    if (s.type === "dialogue") return `[${s.character}] ${s.text}`;
-    if (s.type === "choice") return `[选择] ${s.text}`;
-    return s.text;
+    let base = "";
+    if (s.type === "narration") base = `[旁白] ${s.text}`;
+    else if (s.type === "dialogue") base = `[${s.character}] ${s.text}`;
+    else if (s.type === "choice") base = `[选择] ${s.text}`;
+    else base = s.text;
+    if (s.diceResult) {
+      base += ` [骰子:${s.diceResult.roll}/${s.diceResult.judgmentValue}=${s.diceResult.outcome}]`;
+    }
+    return base;
   };
 
   if (storySummary) {
@@ -74,12 +110,19 @@ async function saveStoryIds(ids: string[]): Promise<void> {
   await AsyncStorage.setItem(STORIES_KEY, JSON.stringify(ids));
 }
 
+/** Apply migration defaults for stories created before difficulty/characterCards were added */
+function migrateStory(story: Story): Story {
+  if (!story.difficulty) story.difficulty = "普通";
+  if (!story.characterCards) story.characterCards = [];
+  return story;
+}
+
 export async function getAllStories(): Promise<Story[]> {
   const ids = await getStoryIds();
   const stories: Story[] = [];
   for (const id of ids) {
     const raw = await AsyncStorage.getItem(storyKey(id));
-    if (raw) stories.push(JSON.parse(raw));
+    if (raw) stories.push(migrateStory(JSON.parse(raw)));
   }
   // Sort by updatedAt descending
   stories.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -88,7 +131,7 @@ export async function getAllStories(): Promise<Story[]> {
 
 export async function getStory(id: string): Promise<Story | null> {
   const raw = await AsyncStorage.getItem(storyKey(id));
-  return raw ? JSON.parse(raw) : null;
+  return raw ? migrateStory(JSON.parse(raw)) : null;
 }
 
 export async function createStory(
@@ -96,7 +139,8 @@ export async function createStory(
   premise: string,
   genre: string,
   protagonistName: string,
-  protagonistDescription: string
+  protagonistDescription: string,
+  difficulty: DifficultyLevel = "普通"
 ): Promise<Story> {
   const id = generateId();
   const now = Date.now();
@@ -114,6 +158,8 @@ export async function createStory(
     historyContext: "",
     choiceCount: 0,
     storySummary: "",
+    difficulty,
+    characterCards: [],
   };
   await AsyncStorage.setItem(storyKey(id), JSON.stringify(story));
   const ids = await getStoryIds();

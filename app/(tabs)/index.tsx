@@ -99,8 +99,15 @@ export default function HomeScreen() {
           <Text style={[styles.cardTitle, { color: colors.foreground }]} numberOfLines={1}>
             {item.title}
           </Text>
-          <View style={[styles.genreBadge, { backgroundColor: genreColor + "30" }]}>
-            <Text style={[styles.genreText, { color: genreColor }]}>{item.genre}</Text>
+          <View style={{ flexDirection: "row", gap: 6 }}>
+            {item.difficulty && item.difficulty !== "普通" && (
+              <View style={[styles.genreBadge, { backgroundColor: "#6b728020" }]}>
+                <Text style={[styles.genreText, { color: "#6b7280" }]}>{item.difficulty}</Text>
+              </View>
+            )}
+            <View style={[styles.genreBadge, { backgroundColor: genreColor + "30" }]}>
+              <Text style={[styles.genreText, { color: genreColor }]}>{item.genre}</Text>
+            </View>
           </View>
         </View>
         <Text style={[styles.cardPremise, { color: colors.muted }]} numberOfLines={2}>
