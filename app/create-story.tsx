@@ -1,16 +1,16 @@
-import { useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
-  Text,
-  View,
-  TextInput,
-  TouchableOpacity,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
-  Platform,
-  KeyboardAvoidingView,
-  Alert,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 
 import { ScreenContainer } from "@/components/screen-container";
@@ -24,39 +24,20 @@ import {
 } from "@/lib/story-store";
 import {
   generateStory,
-  randomizeStory,
   getLLMConfig,
+  randomizeStory,
   PACE_MIN_CHARS,
 } from "@/lib/llm-client";
 
-const GENRES = [
-  { label: "奇幻冒险", emoji: "⚔️" },
-  { label: "校园日常", emoji: "🏫" },
-  { label: "悬疑推理", emoji: "🔍" },
-  { label: "都市情感", emoji: "🌆" },
-  { label: "古风仙侠", emoji: "🏔️" },
-  { label: "自定义", emoji: "✨" },
-];
-
-const DIFFICULTIES: { label: DifficultyLevel; desc: string; emoji: string }[] =
-  [
-    { label: "简单", desc: "失败轻微，成功丰厚", emoji: "😊" },
-    { label: "普通", desc: "平衡体验", emoji: "⚔️" },
-    { label: "困难", desc: "失败严重，成功有限", emoji: "💀" },
-    { label: "噩梦", desc: "极高风险，微薄回报", emoji: "☠️" },
-    { label: "无随机", desc: "无骰子判定", emoji: "📖" },
-  ];
-
-const PACES: { label: PaceLevel; desc: string; emoji: string }[] = [
-  { label: "慵懒", desc: "细节丰富，慢节奏", emoji: "🐢" },
-  { label: "轻松", desc: "平衡叙事节奏", emoji: "🍃" },
-  { label: "紧张", desc: "冲突更密集", emoji: "⚡" },
-  { label: "紧迫", desc: "短促高压推进", emoji: "🔥" },
-];
+const GENRES = ["奇幻冒险", "校园日常", "悬疑推理", "都市情感", "古风仙侠", "自定义"];
+const DIFFICULTIES: DifficultyLevel[] = ["简单", "普通", "困难", "噩梦", "无随机"];
+const PACES: PaceLevel[] = ["慵懒", "轻松", "紧张", "紧迫"];
 
 export default function CreateStoryScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<Record<string, string | string[]>>();
   const colors = useColors();
+
   const [title, setTitle] = useState("");
   const [premise, setPremise] = useState("");
   const [genre, setGenre] = useState("奇幻冒险");
@@ -68,32 +49,46 @@ export default function CreateStoryScreen() {
   const [creating, setCreating] = useState(false);
   const [randomizing, setRandomizing] = useState(false);
 
+  useEffect(() => {
+    if (typeof params.title === "string") setTitle(params.title);
+    if (typeof params.premise === "string") setPremise(params.premise);
+    if (typeof params.genre === "string" && params.genre) setGenre(params.genre);
+    if (typeof params.protagonistName === "string") setProtagonistName(params.protagonistName);
+    if (typeof params.protagonistDescription === "string") {
+      setProtagonistDescription(params.protagonistDescription);
+    }
+    if (typeof params.protagonistAppearance === "string") {
+      setProtagonistAppearance(params.protagonistAppearance);
+    }
+    if (typeof params.difficulty === "string") setDifficulty(params.difficulty as DifficultyLevel);
+    if (typeof params.initialPacing === "string") setInitialPacing(params.initialPacing as PaceLevel);
+  }, [params]);
+
+  const canCreate =
+    title.trim().length > 0 && premise.trim().length > 0 && protagonistName.trim().length > 0;
+
   async function handleRandomize() {
     if (randomizing || creating) return;
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     const config = await getLLMConfig();
     if (!config.apiKey) {
-      Alert.alert(
-        "未配置 API",
-        "请先在设置中配置 AI API Key 才能使用随机功能",
-        [
-          { text: "取消", style: "cancel" },
-          { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
-        ],
-      );
+      Alert.alert("未配置 API", "请先在设置页配置 API Key", [
+        { text: "取消", style: "cancel" },
+        { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
+      ]);
       return;
     }
+
     setRandomizing(true);
     try {
       const result = await randomizeStory();
       setTitle(result.title);
+      setPremise(result.premise);
       setGenre(result.genre);
       setProtagonistName(result.protagonistName);
       setProtagonistDescription(result.protagonistDescription);
       setProtagonistAppearance(result.protagonistAppearance ?? "");
-      setPremise(result.premise);
     } catch (err) {
       Alert.alert("随机失败", err instanceof Error ? err.message : "未知错误");
     } finally {
@@ -101,21 +96,13 @@ export default function CreateStoryScreen() {
     }
   }
 
-  const canCreate =
-    title.trim().length > 0 &&
-    premise.trim().length > 0 &&
-    protagonistName.trim().length > 0;
-
   async function handleCreate() {
     if (!canCreate || creating) return;
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    // Check API config before creating
     const config = await getLLMConfig();
     if (!config.apiKey) {
-      Alert.alert("未配置 API", "请先在设置中配置 AI API Key 才能创建故事", [
+      Alert.alert("未配置 API", "请先在设置页配置 API Key", [
         { text: "取消", style: "cancel" },
         { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
       ]);
@@ -124,20 +111,18 @@ export default function CreateStoryScreen() {
 
     setCreating(true);
     try {
-      // Create story entry first
       const story = await createStory(
         title.trim(),
         premise.trim(),
-        genre,
+        genre.trim(),
         protagonistName.trim(),
         protagonistDescription.trim(),
         difficulty,
         initialPacing,
-        protagonistAppearance.trim(),
+        protagonistAppearance.trim()
       );
 
-      // Generate initial story segments
-      const result = await generateStory({
+      const generated = await generateStory({
         title: story.title,
         premise: story.premise,
         genre: story.genre,
@@ -148,47 +133,52 @@ export default function CreateStoryScreen() {
         pacing: story.currentPacing,
       });
 
-      if (result.segments && result.segments.length > 0) {
-        story.segments = result.segments;
-        story.currentIndex = 0;
-        story.currentPacing = result.pacing;
-        story.lastGeneratedChars = result.generatedChars;
-        // Process new characters from initial generation
-        if (result.newCharacters && result.newCharacters.length > 0) {
-          for (const nc of result.newCharacters) {
-            const exists = story.characterCards.some((c) => c.name === nc.name);
-            if (!exists) {
-              story.characterCards.push({
-                id:
-                  Date.now().toString(36) +
-                  Math.random().toString(36).slice(2, 8),
-                name: nc.name,
-                hiddenName: nc.hiddenName?.trim() || "陌生人",
-                isNameRevealed:
-                  typeof nc.knownToPlayer === "boolean"
-                    ? nc.knownToPlayer
-                    : true,
-                gender: nc.gender,
-                personality: nc.personality,
-                background: nc.background,
-                appearance: nc.appearance || "",
-                affinity: 0,
-                firstAppearance: 0,
-              });
-            }
-          }
+      story.segments = generated.segments || [];
+      story.currentIndex = 0;
+      story.currentPacing = generated.pacing;
+      story.lastGeneratedChars = generated.generatedChars;
+
+      if (generated.newCharacters && generated.newCharacters.length > 0) {
+        for (const npc of generated.newCharacters) {
+          if (story.characterCards.some((c) => c.name === npc.name)) continue;
+          story.characterCards.push({
+            id: `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+            name: npc.name,
+            hiddenName: npc.hiddenName?.trim() || "陌生人",
+            isNameRevealed: npc.knownToPlayer ?? true,
+            gender: npc.gender,
+            personality: npc.personality,
+            background: npc.background,
+            appearance: npc.appearance || "",
+            affinity: 0,
+            firstAppearance: 0,
+          });
         }
-        await updateStory(story);
-        router.replace({ pathname: "/game", params: { storyId: story.id } });
-      } else {
-        throw new Error("AI 未返回有效剧情，请稍后重试");
       }
+
+      await updateStory(story);
+      router.replace({ pathname: "/game", params: { storyId: story.id } });
     } catch (err) {
-      console.error("Create failed:", err);
       Alert.alert("创建失败", err instanceof Error ? err.message : "未知错误");
     } finally {
       setCreating(false);
     }
+  }
+
+  function handleShareToPlaza() {
+    router.push({
+      pathname: "/plaza/submit-story" as any,
+      params: {
+        title,
+        premise,
+        genre,
+        protagonistName,
+        protagonistDescription,
+        protagonistAppearance,
+        difficulty,
+        initialPacing,
+      },
+    });
   }
 
   return (
@@ -197,369 +187,129 @@ export default function CreateStoryScreen() {
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        {/* Header */}
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={styles.backButton}
-            activeOpacity={0.7}
-          >
-            <IconSymbol name="arrow.left" size={24} color={colors.foreground} />
+        <View style={[styles.header, { borderBottomColor: colors.border }]}> 
+          <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+            <IconSymbol name="arrow.left" size={22} color={colors.foreground} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
-            创建新故事
-          </Text>
-          <TouchableOpacity
-            onPress={handleRandomize}
-            disabled={randomizing || creating}
-            style={styles.randomButton}
-            activeOpacity={0.7}
-          >
-            {randomizing ? (
-              <Text
-                style={[styles.randomButtonText, { color: colors.primary }]}
-              >
-                生成中
-              </Text>
-            ) : (
-              <>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>创建故事</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity onPress={handleShareToPlaza} style={styles.headerBtn}>
+              <IconSymbol name="person.2.fill" size={18} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleRandomize} style={styles.headerBtn}>
+              {randomizing ? (
+                <Text style={{ color: colors.primary, fontSize: 12 }}>生成中</Text>
+              ) : (
                 <IconSymbol name="dice" size={18} color={colors.primary} />
-                <Text
-                  style={[styles.randomButtonText, { color: colors.primary }]}
-                >
-                  随机
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
-        <ScrollView
-          style={styles.flex}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Title Input */}
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              故事标题
-            </Text>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.surface,
-                  color: colors.foreground,
-                  borderColor: colors.border,
-                },
-              ]}
-              placeholder="给你的故事起个名字..."
-              placeholderTextColor={colors.muted}
-              value={title}
-              onChangeText={setTitle}
-              maxLength={50}
-              returnKeyType="next"
-            />
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <LabeledInput label="故事标题" value={title} onChangeText={setTitle} colors={colors} />
+
+          <LabeledInput
+            label="主角姓名"
+            value={protagonistName}
+            onChangeText={setProtagonistName}
+            colors={colors}
+          />
+
+          <LabeledInput
+            label="主角描述"
+            value={protagonistDescription}
+            onChangeText={setProtagonistDescription}
+            colors={colors}
+            multiline
+          />
+
+          <LabeledInput
+            label="主角外貌"
+            value={protagonistAppearance}
+            onChangeText={setProtagonistAppearance}
+            colors={colors}
+            multiline
+          />
+
+          <Text style={[styles.label, { color: colors.foreground }]}>故事类型</Text>
+          <View style={styles.chipsRow}>
+            {GENRES.map((item) => (
+              <TouchableOpacity
+                key={item}
+                onPress={() => setGenre(item)}
+                style={[
+                  styles.chip,
+                  {
+                    borderColor: genre === item ? colors.primary : colors.border,
+                    backgroundColor: genre === item ? `${colors.primary}20` : colors.surface,
+                  },
+                ]}
+              >
+                <Text style={{ color: genre === item ? colors.primary : colors.foreground }}>{item}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* Protagonist Input */}
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              主角姓名
-            </Text>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: colors.surface,
-                  color: colors.foreground,
-                  borderColor: protagonistName.trim()
-                    ? colors.primary
-                    : colors.border,
-                },
-              ]}
-              placeholder="你扮演的角色叫什么名字..."
-              placeholderTextColor={colors.muted}
-              value={protagonistName}
-              onChangeText={setProtagonistName}
-              maxLength={20}
-              returnKeyType="next"
-            />
+          <Text style={[styles.label, { color: colors.foreground }]}>难度</Text>
+          <View style={styles.chipsRow}>
+            {DIFFICULTIES.map((item) => (
+              <TouchableOpacity
+                key={item}
+                onPress={() => setDifficulty(item)}
+                style={[
+                  styles.chip,
+                  {
+                    borderColor: difficulty === item ? colors.primary : colors.border,
+                    backgroundColor: difficulty === item ? `${colors.primary}20` : colors.surface,
+                  },
+                ]}
+              >
+                <Text style={{ color: difficulty === item ? colors.primary : colors.foreground }}>{item}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              主角简介
-            </Text>
-            <Text style={[styles.hint, { color: colors.muted }]}>
-              简要描述主角的性格或背景（选填）
-            </Text>
-            <TextInput
-              style={[
-                styles.textArea,
-                {
-                  backgroundColor: colors.surface,
-                  color: colors.foreground,
-                  borderColor: colors.border,
-                  minHeight: 80,
-                },
-              ]}
-              placeholder="例如：冷静内敛、擅长推理的侦探学生，隐藏着不为人知的过去..."
-              placeholderTextColor={colors.muted}
-              value={protagonistDescription}
-              onChangeText={setProtagonistDescription}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-              maxLength={200}
-            />
+          <Text style={[styles.label, { color: colors.foreground }]}>初始节奏</Text>
+          <View style={styles.chipsRow}>
+            {PACES.map((item) => (
+              <TouchableOpacity
+                key={item}
+                onPress={() => setInitialPacing(item)}
+                style={[
+                  styles.chip,
+                  {
+                    borderColor: initialPacing === item ? colors.primary : colors.border,
+                    backgroundColor: initialPacing === item ? `${colors.primary}20` : colors.surface,
+                  },
+                ]}
+              >
+                <Text style={{ color: initialPacing === item ? colors.primary : colors.foreground }}>
+                  {item} ({PACE_MIN_CHARS[item]}字)
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              主角外貌
-            </Text>
-            <Text style={[styles.hint, { color: colors.muted }]}>
-              可选，描述主角发色、瞳色、体型和穿着（通过顶部“随机”与故事一并生成）
-            </Text>
-            <TextInput
-              style={[
-                styles.textArea,
-                {
-                  backgroundColor: colors.surface,
-                  color: colors.foreground,
-                  borderColor: colors.border,
-                  minHeight: 80,
-                },
-              ]}
-              placeholder="例如：黑色短发，灰蓝色眼睛，身形修长，常穿深色风衣与长靴..."
-              placeholderTextColor={colors.muted}
-              value={protagonistAppearance}
-              onChangeText={setProtagonistAppearance}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-              maxLength={200}
-            />
-          </View>
+          <LabeledInput
+            label="故事开场"
+            value={premise}
+            onChangeText={setPremise}
+            colors={colors}
+            multiline
+            minHeight={140}
+          />
 
-          {/* Genre Selection */}
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              故事风格
-            </Text>
-            <View style={styles.genreGrid}>
-              {GENRES.map((g) => {
-                const isSelected = genre === g.label;
-                return (
-                  <TouchableOpacity
-                    key={g.label}
-                    onPress={() => {
-                      setGenre(g.label);
-                      if (Platform.OS !== "web") {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                    }}
-                    style={[
-                      styles.genreChip,
-                      {
-                        backgroundColor: isSelected
-                          ? colors.primary + "25"
-                          : colors.surface,
-                        borderColor: isSelected
-                          ? colors.primary
-                          : colors.border,
-                      },
-                    ]}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.genreEmoji}>{g.emoji}</Text>
-                    <Text
-                      style={[
-                        styles.genreLabel,
-                        {
-                          color: isSelected
-                            ? colors.primary
-                            : colors.foreground,
-                          fontWeight: isSelected ? "700" : "500",
-                        },
-                      ]}
-                    >
-                      {g.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* Difficulty Selection */}
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              难度设定
-            </Text>
-            <Text style={[styles.hint, { color: colors.muted }]}>
-              影响骰子判定结果的严厉程度
-            </Text>
-            <View style={styles.genreGrid}>
-              {DIFFICULTIES.map((d) => {
-                const isSelected = difficulty === d.label;
-                return (
-                  <TouchableOpacity
-                    key={d.label}
-                    onPress={() => {
-                      setDifficulty(d.label);
-                      if (Platform.OS !== "web") {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                    }}
-                    style={[
-                      styles.genreChip,
-                      {
-                        backgroundColor: isSelected
-                          ? colors.primary + "25"
-                          : colors.surface,
-                        borderColor: isSelected
-                          ? colors.primary
-                          : colors.border,
-                      },
-                    ]}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.genreEmoji}>{d.emoji}</Text>
-                    <Text
-                      style={[
-                        styles.genreLabel,
-                        {
-                          color: isSelected
-                            ? colors.primary
-                            : colors.foreground,
-                          fontWeight: isSelected ? "700" : "500",
-                        },
-                      ]}
-                    >
-                      {d.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* Initial Pacing Selection */}
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              初始剧情节奏
-            </Text>
-            <Text style={[styles.hint, { color: colors.muted }]}>
-              影响首轮与后续生成的目标字数（默认轻松）
-            </Text>
-            <View style={styles.genreGrid}>
-              {PACES.map((pace) => {
-                const isSelected = initialPacing === pace.label;
-                return (
-                  <TouchableOpacity
-                    key={pace.label}
-                    onPress={() => {
-                      setInitialPacing(pace.label);
-                      if (Platform.OS !== "web") {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                    }}
-                    style={[
-                      styles.genreChip,
-                      {
-                        backgroundColor: isSelected
-                          ? colors.primary + "25"
-                          : colors.surface,
-                        borderColor: isSelected
-                          ? colors.primary
-                          : colors.border,
-                      },
-                    ]}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.genreEmoji}>{pace.emoji}</Text>
-                    <Text
-                      style={[
-                        styles.genreLabel,
-                        {
-                          color: isSelected
-                            ? colors.primary
-                            : colors.foreground,
-                          fontWeight: isSelected ? "700" : "500",
-                        },
-                      ]}
-                    >
-                      {pace.label}
-                    </Text>
-                    <Text style={[styles.paceHint, { color: colors.muted }]}>
-                      {PACE_MIN_CHARS[pace.label]}字
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-
-          {/* Premise Input */}
-          <View style={styles.section}>
-            <Text style={[styles.label, { color: colors.foreground }]}>
-              故事开头
-            </Text>
-            <Text style={[styles.hint, { color: colors.muted }]}>
-              描述故事的世界观、角色和开场场景，AI将据此生成剧情
-            </Text>
-            <TextInput
-              style={[
-                styles.textArea,
-                {
-                  backgroundColor: colors.surface,
-                  color: colors.foreground,
-                  borderColor: colors.border,
-                },
-              ]}
-              placeholder="例如：在一座被迷雾笼罩的古老学院中，你是一名刚入学的新生。传说学院地下封印着一个远古的秘密，而你在入学第一天就收到了一封神秘的信件..."
-              placeholderTextColor={colors.muted}
-              value={premise}
-              onChangeText={setPremise}
-              multiline
-              numberOfLines={8}
-              textAlignVertical="top"
-              maxLength={1000}
-            />
-            <Text style={[styles.charCount, { color: colors.muted }]}>
-              {premise.length}/1000
-            </Text>
-          </View>
-
-          {/* Create Button */}
           <TouchableOpacity
             onPress={handleCreate}
             disabled={!canCreate || creating}
             style={[
-              styles.createButton,
-              {
-                backgroundColor: canCreate ? colors.primary : colors.surface,
-                opacity: creating ? 0.7 : 1,
-              },
+              styles.createBtn,
+              { backgroundColor: canCreate ? colors.primary : colors.muted },
             ]}
-            activeOpacity={0.8}
           >
-            <IconSymbol
-              name="play.fill"
-              size={20}
-              color={canCreate ? "#fff" : colors.muted}
-            />
-            <Text
-              style={[
-                styles.createButtonText,
-                { color: canCreate ? "#fff" : colors.muted },
-              ]}
-            >
-              {creating ? "创建中..." : "开始冒险"}
-            </Text>
+            <IconSymbol name="play.fill" size={18} color="#fff" />
+            <Text style={styles.createText}>{creating ? "创建中..." : "开始冒险"}</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -567,107 +317,80 @@ export default function CreateStoryScreen() {
   );
 }
 
+function LabeledInput({
+  label,
+  value,
+  onChangeText,
+  colors,
+  multiline = false,
+  minHeight,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  colors: ReturnType<typeof useColors>;
+  multiline?: boolean;
+  minHeight?: number;
+}) {
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.label, { color: colors.foreground }]}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        style={[
+          styles.input,
+          {
+            color: colors.foreground,
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+            minHeight: minHeight ?? (multiline ? 84 : undefined),
+            textAlignVertical: multiline ? "top" : "center",
+          },
+        ]}
+        multiline={multiline}
+        placeholderTextColor={colors.muted}
+      />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 0.5,
+    justifyContent: "space-between",
   },
-  backButton: {
-    padding: 4,
+  headerBtn: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
-  headerTitle: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  randomButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    padding: 4,
-    minWidth: 32,
-  },
-  randomButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 8,
-  },
-  hint: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 8,
-  },
+  headerTitle: { fontSize: 18, fontWeight: "700" },
+  content: { padding: 16, gap: 10, paddingBottom: 28 },
+  section: { gap: 6 },
+  label: { fontSize: 14, fontWeight: "700" },
   input: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-  },
-  textArea: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    lineHeight: 22,
-    minHeight: 180,
-  },
-  charCount: {
-    fontSize: 12,
-    textAlign: "right",
-    marginTop: 4,
-  },
-  genreGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  genreChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 14,
+    borderRadius: 10,
+    paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    gap: 6,
+    fontSize: 15,
   },
-  genreEmoji: {
-    fontSize: 16,
-  },
-  genreLabel: {
-    fontSize: 14,
-  },
-  paceHint: {
-    fontSize: 12,
-  },
-  createButton: {
+  chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8 },
+  createBtn: {
+    marginTop: 8,
+    borderRadius: 12,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 16,
-    borderRadius: 16,
     gap: 8,
-    marginTop: 8,
   },
-  createButtonText: {
-    fontSize: 18,
-    fontWeight: "700",
-  },
+  createText: { color: "#fff", fontWeight: "700", fontSize: 16 },
 });

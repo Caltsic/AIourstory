@@ -1,0 +1,54 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Story Admin</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+      .wrap { max-width: 1000px; margin: 0 auto; padding: 16px; }
+      .card { background: #111827; border: 1px solid #334155; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+      input, select, textarea, button { border-radius: 8px; border: 1px solid #475569; background: #0b1220; color: #e2e8f0; padding: 8px; }
+      button { cursor: pointer; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .space { justify-content: space-between; align-items: center; }
+      .item { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #334155; }
+      .ok { color: #34d399; }
+      .err { color: #f87171; }
+      pre { white-space: pre-wrap; background: #0b1220; padding: 8px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>审核后台</h1>
+      <div class="card">
+        <div class="row">
+          <input id="baseUrl" placeholder="API Base URL" value="http://127.0.0.1:3000/v1" style="min-width:280px" />
+          <input id="username" placeholder="管理员用户名" />
+          <input id="password" placeholder="密码" type="password" />
+          <button id="loginBtn">登录</button>
+        </div>
+        <p id="status" class="err"></p>
+      </div>
+
+      <div class="card">
+        <div class="row space">
+          <div class="row">
+            <select id="typeSel">
+              <option value="prompt">提示词</option>
+              <option value="story">故事</option>
+            </select>
+            <button id="loadBtn">加载待审</button>
+          </div>
+          <button id="logoutBtn">退出</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="list"></div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

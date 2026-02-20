@@ -1,0 +1,16 @@
+﻿# IP mode (before ICP)
+:80 {
+  reverse_proxy 127.0.0.1:3000
+}
+
+# Domain mode (after ICP)
+# api.aiourstory.cn {
+#   encode zstd gzip
+#   reverse_proxy 127.0.0.1:3000
+# }
+
+# Optional admin static path (served by Caddy directly)
+# aiourstory.cn {
+#   root * /opt/aistory/ai-story-game/server/admin
+#   file_server
+# }

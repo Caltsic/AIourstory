@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -37,6 +38,7 @@ type ViewMode = "list" | "detail";
 
 export default function PromptsScreen() {
   const colors = useColors();
+  const router = useRouter();
 
   // ─── State ──────────────────────────────────────────────────────────
   const [activeId, setActiveId] = useState("default");
@@ -104,6 +106,14 @@ export default function PromptsScreen() {
       prompts: getDefaultPrompts(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
+    });
+  }
+
+  async function handleShareToPlaza() {
+    const activePresetId = await getActivePresetId();
+    router.push({
+      pathname: "/plaza/submit-prompt" as any,
+      params: activePresetId ? { presetId: activePresetId } : undefined,
     });
   }
 
@@ -269,9 +279,14 @@ export default function PromptsScreen() {
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}> 
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>提示词配置</Text>
-          <TouchableOpacity onPress={handleCreatePreset} style={styles.headerAction}>
-            <IconSymbol name="plus.circle.fill" size={26} color={colors.primary} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <TouchableOpacity onPress={handleShareToPlaza} style={styles.headerAction}>
+              <IconSymbol name="person.2.fill" size={22} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleCreatePreset} style={styles.headerAction}>
+              <IconSymbol name="plus.circle.fill" size={26} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <ScrollView style={styles.content}>

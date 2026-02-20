@@ -1,9 +1,9 @@
+﻿import { Platform } from "react-native";
 import { Tabs } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { HapticTab } from "@/components/haptic-tab";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { Platform } from "react-native";
 import { useColors } from "@/hooks/use-colors";
 
 export default function TabLayout() {
@@ -43,6 +43,15 @@ export default function TabLayout() {
           title: "提示词",
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="doc.text.fill" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="plaza"
+        options={{
+          title: "广场",
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={28} name="person.2.fill" color={color} />
           ),
         }}
       />

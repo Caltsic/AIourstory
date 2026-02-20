@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Text, View, TouchableOpacity, StyleSheet, Alert, TextInput, ScrollView, Modal } from "react-native";
 import Constants from "expo-constants";
+import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
@@ -8,6 +9,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLLMConfig, saveLLMConfig, testAPIKey } from "@/lib/llm-client";
 import { getImageConfig, saveImageConfig } from "@/lib/image-client";
 import { setTestDiceValue } from "@/lib/dice";
+import { useAuth } from "@/lib/auth-provider";
+import { getServerApiBaseUrl, saveServerApiBaseUrl } from "@/lib/storage";
+import { setApiBaseUrl } from "@/lib/api-client";
 
 // 预设的 API 配置
 const API_PRESETS = [
@@ -60,6 +64,8 @@ const API_PRESETS = [
 
 export default function SettingsScreen() {
   const colors = useColors();
+  const router = useRouter();
+  const auth = useAuth();
   const appVersion = Constants.expoConfig?.version ?? "1.0.1";
 
   // AI API 配置状态
@@ -80,6 +86,7 @@ export default function SettingsScreen() {
   const [imageApiUrl, setImageApiUrl] = useState("");
   const [imageModel, setImageModel] = useState("");
   const [imageSize, setImageSize] = useState("");
+  const [serverApiBaseUrl, setServerApiBaseUrl] = useState("");
 
   // 加载保存的配置
   useEffect(() => {
@@ -105,9 +112,22 @@ export default function SettingsScreen() {
       setImageApiUrl(imgConfig.imageApiUrl);
       setImageModel(imgConfig.imageModel);
       setImageSize(imgConfig.imageSize || "");
+
+      const baseUrl = await getServerApiBaseUrl();
+      setServerApiBaseUrl(baseUrl);
     } catch (error) {
       console.error("Failed to load config:", error);
     }
+  }
+
+  async function handleSaveServerApi() {
+    if (!serverApiBaseUrl.trim()) {
+      Alert.alert("错误", "请输入后端地址");
+      return;
+    }
+    await saveServerApiBaseUrl(serverApiBaseUrl.trim());
+    setApiBaseUrl(serverApiBaseUrl.trim());
+    Alert.alert("成功", "后端地址已保存并立即生效");
   }
 
   async function handleSaveImageConfig() {
@@ -214,6 +234,65 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView style={styles.content}>
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>账号</Text>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.cardRow}>
+              <Text style={[styles.cardLabel, { color: colors.foreground }]}>当前身份</Text>
+              <Text style={[styles.cardValue, { color: colors.muted }]}>
+                {auth.user?.isBound
+                  ? `${auth.user.nickname} (${auth.user.username || "bound"})`
+                  : `${auth.user?.nickname || "匿名玩家"} (匿名)`}
+              </Text>
+            </View>
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+            <View style={[styles.buttonRow, { paddingHorizontal: 16, paddingBottom: 14 }]}>
+              {!auth.user?.isBound ? (
+                <TouchableOpacity
+                  onPress={() => router.push("/login" as any)}
+                  style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+                >
+                  <IconSymbol name="person.fill" size={18} color="#fff" />
+                  <Text style={styles.primaryButtonText}>绑定/登录账号</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => router.push("/profile" as any)}
+                  style={[styles.secondaryButton, { borderColor: colors.border }]}
+                >
+                  <IconSymbol name="person.fill" size={18} color={colors.foreground} />
+                  <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>编辑个人资料</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>后端服务</Text>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>API Base URL</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={serverApiBaseUrl}
+              onChangeText={setServerApiBaseUrl}
+              placeholder="http://8.137.71.118/v1"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          <TouchableOpacity
+            onPress={handleSaveServerApi}
+            style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+          >
+            <IconSymbol name="checkmark" size={18} color="#fff" />
+            <Text style={styles.primaryButtonText}>保存后端地址</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* API Configuration Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.muted }]}>AI 配置</Text>

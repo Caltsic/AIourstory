@@ -15,6 +15,7 @@ const IMAGE_API_KEY_KEY = "user_image_api_key";
 const IMAGE_API_URL_KEY = "user_image_api_url";
 const IMAGE_MODEL_KEY = "user_image_model";
 const IMAGE_SIZE_KEY = "user_image_size";
+const SERVER_API_BASE_URL_KEY = "server_api_base_url";
 
 export interface StorageConfig {
   apiKey: string | null;
@@ -145,4 +146,27 @@ export async function clearStorageConfig(): Promise<void> {
     await SecureStore.deleteItemAsync(API_URL_KEY);
     await SecureStore.deleteItemAsync(MODEL_KEY);
   }
+}
+
+/**
+ * Get backend API base url, defaults to local dev server.
+ */
+export async function getServerApiBaseUrl(): Promise<string> {
+  const fallback = "http://127.0.0.1:3000/v1";
+  if (Platform.OS === "web") {
+    return (await AsyncStorage.getItem(SERVER_API_BASE_URL_KEY)) || fallback;
+  }
+  return (await SecureStore.getItemAsync(SERVER_API_BASE_URL_KEY)) || fallback;
+}
+
+/**
+ * Persist backend API base url.
+ */
+export async function saveServerApiBaseUrl(url: string): Promise<void> {
+  const value = url.trim();
+  if (Platform.OS === "web") {
+    await AsyncStorage.setItem(SERVER_API_BASE_URL_KEY, value);
+    return;
+  }
+  await SecureStore.setItemAsync(SERVER_API_BASE_URL_KEY, value);
 }
