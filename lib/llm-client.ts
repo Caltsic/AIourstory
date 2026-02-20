@@ -4,15 +4,10 @@
  */
 
 import {
-  STORY_SYSTEM_PROMPT,
-  CONTINUE_SYSTEM_PROMPT,
-  SUMMARY_SYSTEM_PROMPT,
-  RANDOMIZE_SYSTEM_PROMPT,
-  IMAGE_PROMPT_SYSTEM_PROMPT,
-  EVALUATE_ACTION_SYSTEM_PROMPT,
   buildDifficultyContext,
   buildCharacterCardsContext,
 } from "./llm-prompts";
+import { getActivePrompts } from "./prompt-store";
 import {
   getStorageConfig,
   saveStorageConfig,
@@ -254,6 +249,8 @@ export async function generateStory(
     throw new Error("请先在设置中配置 API Key");
   }
 
+  const prompts = await getActivePrompts();
+
   // 如果 apiUrl 已经包含了完整路径，直接使用；否则添加 /chat/completions
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
@@ -269,7 +266,7 @@ export async function generateStory(
       messages: [
         {
           role: "system",
-          content: STORY_SYSTEM_PROMPT,
+          content: prompts.STORY_SYSTEM_PROMPT,
         },
         {
           role: "user",
@@ -304,6 +301,8 @@ export async function continueStory(
     throw new Error("请先在设置中配置 API Key");
   }
 
+  const prompts = await getActivePrompts();
+
   // 如果 apiUrl 已经包含了完整路径，直接使用；否则添加 /chat/completions
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
@@ -319,7 +318,7 @@ export async function continueStory(
       messages: [
         {
           role: "system",
-          content: CONTINUE_SYSTEM_PROMPT,
+          content: prompts.CONTINUE_SYSTEM_PROMPT,
         },
         {
           role: "user",
@@ -354,6 +353,8 @@ export async function summarizeStory(
     throw new Error("请先在设置中配置 API Key");
   }
 
+  const prompts = await getActivePrompts();
+
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
@@ -366,7 +367,7 @@ export async function summarizeStory(
     body: JSON.stringify({
       model: config.model,
       messages: [
-        { role: "system", content: SUMMARY_SYSTEM_PROMPT },
+        { role: "system", content: prompts.SUMMARY_SYSTEM_PROMPT },
         { role: "user", content: params.history },
       ],
       temperature: 0.3,
@@ -393,6 +394,7 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
     throw new Error("请先在设置中配置 API Key");
   }
 
+  const prompts = await getActivePrompts();
   const randomBucket = Math.floor(Math.random() * 5) + 1;
   const targetGenre = RANDOM_GENRE_POOL[randomBucket - 1];
 
@@ -408,7 +410,7 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
     body: JSON.stringify({
       model: config.model,
       messages: [
-        { role: "system", content: RANDOMIZE_SYSTEM_PROMPT },
+        { role: "system", content: prompts.RANDOMIZE_SYSTEM_PROMPT },
         {
           role: "user",
           content: `请基于题材「${targetGenre}」生成一套故事设定。必须使用该题材，不要改成其他题材。默认避免硬科幻术语与生僻专业词，语言自然口语化。`,
@@ -451,6 +453,8 @@ export async function generateImagePrompt(summary: string): Promise<string> {
     throw new Error("请先在设置中配置 API Key");
   }
 
+  const prompts = await getActivePrompts();
+
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
@@ -463,7 +467,7 @@ export async function generateImagePrompt(summary: string): Promise<string> {
     body: JSON.stringify({
       model: config.model,
       messages: [
-        { role: "system", content: IMAGE_PROMPT_SYSTEM_PROMPT },
+        { role: "system", content: prompts.IMAGE_PROMPT_SYSTEM_PROMPT },
         { role: "user", content: `剧情摘要：\n${summary}` },
       ],
       temperature: 0.7,
@@ -588,6 +592,8 @@ export async function evaluateCustomAction(
     throw new Error("请先在设置中配置 API Key");
   }
 
+  const prompts = await getActivePrompts();
+
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
@@ -600,7 +606,7 @@ export async function evaluateCustomAction(
     body: JSON.stringify({
       model: config.model,
       messages: [
-        { role: "system", content: EVALUATE_ACTION_SYSTEM_PROMPT },
+        { role: "system", content: prompts.EVALUATE_ACTION_SYSTEM_PROMPT },
         {
           role: "user",
           content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n请结合主角的性格与能力评估该行动的判定值（1-8），只输出数字。`,

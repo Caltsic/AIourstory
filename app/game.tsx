@@ -645,8 +645,8 @@ export default function GameScreen() {
         // Increment choice counter
         story.choiceCount = (story.choiceCount ?? 0) + 1;
 
-        // Every 10 choices, refresh summary for context compression only
-        if (story.choiceCount % 10 === 0) {
+        // Every 5 choices, refresh summary for context compression only
+        if (story.choiceCount % 5 === 0) {
           try {
             await updateStory(story);
             const summary = await summarizeStory({

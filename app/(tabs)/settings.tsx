@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Text, View, TouchableOpacity, StyleSheet, Alert, TextInput, ScrollView, Modal } from "react-native";
 import Constants from "expo-constants";
+import { useRouter } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -8,6 +9,8 @@ import { useColors } from "@/hooks/use-colors";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLLMConfig, saveLLMConfig, testAPIKey } from "@/lib/llm-client";
 import { getImageConfig, saveImageConfig } from "@/lib/image-client";
+import { setTestDiceValue } from "@/lib/dice";
+import { getActivePresetId, listPresets } from "@/lib/prompt-store";
 
 // 预设的 API 配置
 const API_PRESETS = [
@@ -60,8 +63,23 @@ const API_PRESETS = [
 
 export default function SettingsScreen() {
   const colors = useColors();
+  const router = useRouter();
   const appVersion = Constants.expoConfig?.version ?? "1.0.1";
-  
+
+  // 提示词预设状态
+  const [activePresetName, setActivePresetName] = useState("默认");
+
+  const loadActivePresetName = useCallback(async () => {
+    const id = await getActivePresetId();
+    if (id === "default") {
+      setActivePresetName("默认");
+    } else {
+      const presets = await listPresets();
+      const active = presets.find((p) => p.id === id);
+      setActivePresetName(active?.name || "默认");
+    }
+  }, []);
+
   // AI API 配置状态
   const [apiKey, setApiKey] = useState("");
   const [apiUrl, setApiUrl] = useState("");
@@ -69,6 +87,11 @@ export default function SettingsScreen() {
   const [selectedPreset, setSelectedPreset] = useState(API_PRESETS.length - 1); // 默认为自定义
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [testing, setTesting] = useState(false);
+
+  // 测试员模式状态
+  const [testerKey, setTesterKey] = useState("");
+  const [testerActivated, setTesterActivated] = useState(false);
+  const [fixedDiceValue, setFixedDiceValue] = useState(1);
 
   // 图片生成 API 配置状态
   const [imageApiKey, setImageApiKey] = useState("");
@@ -79,6 +102,7 @@ export default function SettingsScreen() {
   // 加载保存的配置
   useEffect(() => {
     loadConfig();
+    loadActivePresetName();
   }, []);
 
   async function loadConfig() {
@@ -300,6 +324,23 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* Prompt Configuration */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>提示词配置</Text>
+          <TouchableOpacity
+            onPress={() => router.push("/prompt-settings" as any)}
+            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
+            <View style={styles.cardRow}>
+              <Text style={[styles.cardLabel, { color: colors.foreground }]}>管理提示词与预设</Text>
+              <View style={styles.cardValueRow}>
+                <Text style={[styles.cardValue, { color: colors.muted }]}>{activePresetName}</Text>
+                <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+              </View>
+            </View>
+          </TouchableOpacity>
+        </View>
+
         {/* Image Generation Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.muted }]}>图片生成配置</Text>
@@ -409,6 +450,93 @@ export default function SettingsScreen() {
               7. 每个选择都会影响故事走向
             </Text>
           </View>
+        </View>
+
+        {/* Tester Mode */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>测试员验证</Text>
+          {!testerActivated ? (
+            <>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.inputRow}>
+                  <Text style={[styles.inputLabel, { color: colors.foreground }]}>测试密钥</Text>
+                </View>
+                <TextInput
+                  style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+                  value={testerKey}
+                  onChangeText={setTesterKey}
+                  placeholder="输入测试员密钥"
+                  placeholderTextColor={colors.muted}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (testerKey === "1234567") {
+                    setTesterActivated(true);
+                    setTestDiceValue(fixedDiceValue);
+                    Alert.alert("成功", "测试模式已激活");
+                  } else {
+                    Alert.alert("错误", "密钥无效");
+                  }
+                }}
+                style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+              >
+                <IconSymbol name="checkmark.circle" size={18} color="#fff" />
+                <Text style={styles.primaryButtonText}>验证</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.cardRow}>
+                  <Text style={[styles.cardLabel, { color: colors.foreground }]}>固定骰子点数</Text>
+                  <Text style={[styles.cardValue, { color: colors.primary }]}>{fixedDiceValue}</Text>
+                </View>
+                <View style={{ flexDirection: "row", justifyContent: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((v) => (
+                    <TouchableOpacity
+                      key={v}
+                      onPress={() => {
+                        setFixedDiceValue(v);
+                        setTestDiceValue(v);
+                      }}
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        backgroundColor: fixedDiceValue === v ? colors.primary : colors.background,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        borderWidth: 1,
+                        borderColor: fixedDiceValue === v ? colors.primary : colors.border,
+                      }}
+                    >
+                      <Text style={{
+                        fontSize: 16,
+                        fontWeight: "700",
+                        color: fixedDiceValue === v ? "#fff" : colors.foreground,
+                      }}>{v}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setTesterActivated(false);
+                  setTesterKey("");
+                  setTestDiceValue(null);
+                  Alert.alert("提示", "测试模式已关闭");
+                }}
+                style={[styles.dangerButton, { borderColor: colors.error }]}
+              >
+                <IconSymbol name="xmark.circle" size={18} color={colors.error} />
+                <Text style={[styles.dangerButtonText, { color: colors.error }]}>关闭测试模式</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         {/* Data */}

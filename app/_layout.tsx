@@ -19,6 +19,10 @@ export default function RootLayout() {
           name="game"
           options={{ presentation: "fullScreenModal" }}
         />
+        <Stack.Screen
+          name="prompt-settings"
+          options={{ presentation: "fullScreenModal" }}
+        />
       </Stack>
     </ThemeProvider>
   );
