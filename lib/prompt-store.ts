@@ -11,6 +11,7 @@ import {
   IMAGE_PROMPT_SYSTEM_PROMPT,
   RANDOMIZE_SYSTEM_PROMPT,
   EVALUATE_ACTION_SYSTEM_PROMPT,
+  CHARACTER_PORTRAIT_SYSTEM_PROMPT,
 } from "./llm-prompts";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -21,7 +22,8 @@ export type PromptKey =
   | "SUMMARY_SYSTEM_PROMPT"
   | "IMAGE_PROMPT_SYSTEM_PROMPT"
   | "RANDOMIZE_SYSTEM_PROMPT"
-  | "EVALUATE_ACTION_SYSTEM_PROMPT";
+  | "EVALUATE_ACTION_SYSTEM_PROMPT"
+  | "CHARACTER_PORTRAIT_SYSTEM_PROMPT";
 
 export type PromptSet = Record<PromptKey, string>;
 
@@ -50,6 +52,7 @@ export const PROMPT_KEYS: PromptKey[] = [
   "IMAGE_PROMPT_SYSTEM_PROMPT",
   "RANDOMIZE_SYSTEM_PROMPT",
   "EVALUATE_ACTION_SYSTEM_PROMPT",
+  "CHARACTER_PORTRAIT_SYSTEM_PROMPT",
 ];
 
 export const PROMPT_META: Record<PromptKey, { label: string; description: string }> = {
@@ -77,6 +80,10 @@ export const PROMPT_META: Record<PromptKey, { label: string; description: string
     label: "行动判定",
     description: "评估自定义行动难度的提示词",
   },
+  CHARACTER_PORTRAIT_SYSTEM_PROMPT: {
+    label: "角色立绘",
+    description: "根据角色信息生成人物形象绘画提示词",
+  },
 };
 
 // ─── Storage Keys ───────────────────────────────────────────────────
@@ -95,6 +102,7 @@ export function getDefaultPrompts(): PromptSet {
     IMAGE_PROMPT_SYSTEM_PROMPT,
     RANDOMIZE_SYSTEM_PROMPT,
     EVALUATE_ACTION_SYSTEM_PROMPT,
+    CHARACTER_PORTRAIT_SYSTEM_PROMPT,
   };
 }
 

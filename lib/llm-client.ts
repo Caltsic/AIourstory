@@ -18,6 +18,7 @@ import type {
   StorySegment,
   CharacterCard,
   DifficultyLevel,
+  PaceLevel,
 } from "./story-store";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -34,7 +35,9 @@ export interface GenerateStoryParams {
   genre: string;
   protagonistName: string;
   protagonistDescription: string;
+  protagonistAppearance?: string;
   difficulty: DifficultyLevel;
+  pacing?: PaceLevel;
   characterCards?: CharacterCard[];
 }
 
@@ -46,13 +49,16 @@ export interface ContinueStoryParams {
   choiceText: string;
   protagonistName: string;
   protagonistDescription: string;
+  protagonistAppearance?: string;
   difficulty: DifficultyLevel;
+  pacing?: PaceLevel;
   characterCards?: CharacterCard[];
   diceOutcomeContext?: string;
 }
 
 export interface SummarizeStoryParams {
   history: string;
+  recentTitles?: string[];
 }
 
 export interface RandomStoryConfig {
@@ -60,6 +66,7 @@ export interface RandomStoryConfig {
   genre: string;
   protagonistName: string;
   protagonistDescription: string;
+  protagonistAppearance?: string;
   premise: string;
 }
 
@@ -71,6 +78,37 @@ const RANDOM_GENRE_POOL = [
   "都市情感",
 ] as const;
 
+function buildFallbackProtagonistAppearance(seedText = ""): string {
+  const text = seedText.trim();
+  const hair = [
+    "黑色短发",
+    "深棕中长发",
+    "银灰短发",
+    "栗色微卷发",
+    "深蓝利落短发",
+  ];
+  const eyes = [
+    "灰蓝色眼睛",
+    "琥珀色眼睛",
+    "墨色眼睛",
+    "翠绿色眼睛",
+    "茶褐色眼睛",
+  ];
+  const body = ["身形修长", "肩背挺拔", "体态轻盈", "身材匀称", "动作利落"];
+  const outfit = [
+    "常穿深色风衣与长靴",
+    "常见学院外套与衬衫",
+    "偏好简洁夹克与工装裤",
+    "习惯轻便针织外套与长裤",
+    "常穿干练短款外套与皮靴",
+  ];
+  const pick = (arr: string[], salt: number) => {
+    const base = text.length + salt * 13 + (text.charCodeAt(0) || 17);
+    return arr[Math.abs(base) % arr.length];
+  };
+  return `${pick(hair, 1)}，${pick(eyes, 2)}，${pick(body, 3)}，${pick(outfit, 4)}。`;
+}
+
 export interface NewCharacterData {
   name: string;
   hiddenName?: string;
@@ -78,11 +116,81 @@ export interface NewCharacterData {
   gender: string;
   personality: string;
   background: string;
+  appearance?: string;
+}
+
+export interface SummaryResult {
+  title: string;
+  summary: string;
+  involvedCharacters: string[];
 }
 
 export interface LLMResponse {
   segments: StorySegment[];
   newCharacters?: NewCharacterData[];
+  pacing: PaceLevel;
+  generatedChars: number;
+  minCharsTarget: number;
+}
+
+export const PACE_MIN_CHARS: Record<PaceLevel, number> = {
+  慵懒: 3000,
+  轻松: 2000,
+  紧张: 1500,
+  紧迫: 1000,
+};
+
+const DEFAULT_PACE: PaceLevel = "轻松";
+
+function normalizePaceLevel(value: unknown): PaceLevel {
+  if (
+    value === "慵懒" ||
+    value === "轻松" ||
+    value === "紧张" ||
+    value === "紧迫"
+  ) {
+    return value;
+  }
+  return DEFAULT_PACE;
+}
+
+function countSegmentsChars(segments: StorySegment[]): number {
+  return segments.reduce((sum, segment) => {
+    const main = typeof segment.text === "string" ? segment.text.length : 0;
+    const choices = Array.isArray(segment.choices)
+      ? segment.choices.join("").length
+      : 0;
+    return sum + main + choices;
+  }, 0);
+}
+
+function buildPacingConstraint(requiredPacing: PaceLevel): string {
+  const minCharsTarget = PACE_MIN_CHARS[requiredPacing];
+  return `本轮节奏固定为「${requiredPacing}」。你必须输出 pacing="${requiredPacing}"，不得改成其他值。\n字符数规则（统计 segments 的 text 与 choices 合计）：目标值 >= ${minCharsTarget}。请确保内容充实，至少明显高于目标值，避免贴线。`;
+}
+
+function buildPacingStructureConstraint(requiredPacing: PaceLevel): string {
+  if (requiredPacing === "慵懒") {
+    return "结构配额（推理向）：12-16 个 segments；至少 2 次场景推进（时间跳转/地点迁移/局势升级满足其二）；至少 2 条可验证新线索、1 个新矛盾点、1 次误导或反转。";
+  }
+  if (requiredPacing === "轻松") {
+    return "结构配额（推理向）：10-14 个 segments；至少 1 次场景推进 + 1 次局势变化；至少 2 条可验证新线索、1 个新矛盾点。";
+  }
+  if (requiredPacing === "紧张") {
+    return "结构配额（推理向）：9-12 个 segments；至少 1 次场景推进 + 2 次连续压力事件；至少 1 条关键线索、1 个伪线索、1 次高风险试探行动。";
+  }
+  return "结构配额（推理向）：8-10 个 segments；至少 1 次硬后果（暴露/受伤/证物损失/关系破裂）并抛出倒计时悬念；至少 1 条关键线索与 1 个矛盾证词。";
+}
+
+const MAX_HISTORY_CHARS = 8000;
+const CONTINUE_REQUEST_TIMEOUT_MS = 90_000;
+
+function clampHistoryForPrompt(history: string): string {
+  const normalized = history?.trim() ?? "";
+  if (normalized.length <= MAX_HISTORY_CHARS) {
+    return normalized;
+  }
+  return `[上下文过长，已截断为最近内容]\n${normalized.slice(-MAX_HISTORY_CHARS)}`;
 }
 
 function extractJsonPayload(content: string): string {
@@ -250,6 +358,7 @@ export async function generateStory(
   }
 
   const prompts = await getActivePrompts();
+  const requiredPacing = normalizePaceLevel(params.pacing ?? DEFAULT_PACE);
 
   // 如果 apiUrl 已经包含了完整路径，直接使用；否则添加 /chat/completions
   const url = config.apiUrl.includes("/chat/completions")
@@ -270,11 +379,11 @@ export async function generateStory(
         },
         {
           role: "user",
-          content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ""}。\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n请生成5-10个故事片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
+          content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ""}${params.protagonistAppearance ? `，主角外貌：${params.protagonistAppearance}` : ""}。\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请生成剧情片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
         },
       ],
       temperature: 1.0,
-      max_tokens: 2000,
+      max_tokens: 4000,
     }),
   });
 
@@ -286,7 +395,7 @@ export async function generateStory(
   const data = await response.json();
   const content = data.choices[0]?.message?.content || "";
 
-  return parseLLMResponse(content);
+  return parseLLMResponse(content, requiredPacing);
 }
 
 /**
@@ -302,33 +411,51 @@ export async function continueStory(
   }
 
   const prompts = await getActivePrompts();
+  const requiredPacing = normalizePaceLevel(params.pacing ?? DEFAULT_PACE);
 
   // 如果 apiUrl 已经包含了完整路径，直接使用；否则添加 /chat/completions
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        {
-          role: "system",
-          content: prompts.CONTINUE_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n历史剧情：\n${params.history}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n请根据用户的选择继续生成3-5个新的故事片段，保持剧情连贯性。`,
-        },
-      ],
-      temperature: 1.0,
-      max_tokens: 1500,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    CONTINUE_REQUEST_TIMEOUT_MS,
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "system",
+            content: prompts.CONTINUE_SYSTEM_PROMPT,
+          },
+          {
+            role: "user",
+            content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${clampHistoryForPrompt(params.history)}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
+          },
+        ],
+        temperature: 1.0,
+        max_tokens: 4000,
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("剧情生成超时，请重试（已自动保护长上下文）");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -338,15 +465,16 @@ export async function continueStory(
   const data = await response.json();
   const content = data.choices[0]?.message?.content || "";
 
-  return parseLLMResponse(content);
+  return parseLLMResponse(content, requiredPacing);
 }
 
 /**
  * 生成剧情摘要（用于长剧情的上下文压缩）
+ * Returns structured summary with title and involved characters
  */
 export async function summarizeStory(
   params: SummarizeStoryParams,
-): Promise<string> {
+): Promise<SummaryResult> {
   const config = await getLLMConfig();
 
   if (!config.apiKey) {
@@ -368,7 +496,12 @@ export async function summarizeStory(
       model: config.model,
       messages: [
         { role: "system", content: prompts.SUMMARY_SYSTEM_PROMPT },
-        { role: "user", content: params.history },
+        {
+          role: "user",
+          content: params.recentTitles?.length
+            ? `${params.history}\n\n[近期总结标题（避免重复）]\n${params.recentTitles.join("\n")}`
+            : params.history,
+        },
       ],
       temperature: 0.3,
       max_tokens: 500,
@@ -381,7 +514,26 @@ export async function summarizeStory(
   }
 
   const data = await response.json();
-  return data.choices[0]?.message?.content?.trim() ?? "";
+  const content: string = data.choices[0]?.message?.content?.trim() ?? "";
+
+  // Try to parse as JSON first (new format)
+  try {
+    const parsed = JSON.parse(extractJsonPayload(content));
+    return {
+      title: parsed.title || "",
+      summary: parsed.summary || content,
+      involvedCharacters: Array.isArray(parsed.involvedCharacters)
+        ? parsed.involvedCharacters
+        : [],
+    };
+  } catch {
+    // Fallback: treat entire content as plain summary text (backward compat)
+    return {
+      title: "",
+      summary: content,
+      involvedCharacters: [],
+    };
+  }
 }
 
 /**
@@ -437,6 +589,9 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
     return {
       ...parsed,
       genre: targetGenre,
+      protagonistAppearance:
+        parsed.protagonistAppearance?.trim() ||
+        buildFallbackProtagonistAppearance(parsed.protagonistDescription),
     };
   } catch {
     throw new Error("AI 返回的设定格式不正确，请重试");
@@ -487,7 +642,10 @@ export async function generateImagePrompt(summary: string): Promise<string> {
 /**
  * 解析 LLM 返回的 JSON 响应
  */
-function parseLLMResponse(content: string): LLMResponse {
+function parseLLMResponse(
+  content: string,
+  requiredPacing?: PaceLevel,
+): LLMResponse {
   try {
     const parsed = JSON.parse(extractJsonPayload(content));
 
@@ -567,7 +725,19 @@ function parseLLMResponse(content: string): LLMResponse {
           }))
       : [];
 
-    return { segments: normalizedSegments, newCharacters };
+    const parsedPacing = normalizePaceLevel(parsed.pacing);
+    const pacing = parsedPacing;
+    const validationPacing = requiredPacing ?? parsedPacing;
+    const generatedChars = countSegmentsChars(normalizedSegments);
+    const minCharsTarget = PACE_MIN_CHARS[validationPacing];
+
+    return {
+      segments: normalizedSegments,
+      newCharacters,
+      pacing,
+      generatedChars,
+      minCharsTarget,
+    };
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error("AI 返回的不是有效的 JSON 格式");
@@ -625,4 +795,52 @@ export async function evaluateCustomAction(
   const content: string = data.choices[0]?.message?.content?.trim() ?? "4";
   const value = parseInt(content, 10);
   return Number.isNaN(value) ? 4 : Math.max(1, Math.min(8, value));
+}
+
+/**
+ * 根据角色信息生成角色立绘的英文提示词
+ */
+export async function generateCharacterPortraitPrompt(
+  character: CharacterCard,
+): Promise<string> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("请先在设置中配置 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+
+  const url = config.apiUrl.includes("/chat/completions")
+    ? config.apiUrl
+    : `${config.apiUrl}/chat/completions`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: "system", content: prompts.CHARACTER_PORTRAIT_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `角色信息：\n姓名：${character.name}\n性别：${character.gender}\n外貌：${character.appearance || "未提供"}\n性格：${character.personality}\n背景：${character.background}`,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: 300,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(
+      `角色立绘提示词生成失败: ${response.status} - ${errorText}`,
+    );
+  }
+
+  const data = await response.json();
+  return data.choices[0]?.message?.content?.trim() ?? "";
 }

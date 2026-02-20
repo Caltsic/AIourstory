@@ -20,8 +20,14 @@ import {
   createStory,
   updateStory,
   type DifficultyLevel,
+  type PaceLevel,
 } from "@/lib/story-store";
-import { generateStory, randomizeStory, getLLMConfig } from "@/lib/llm-client";
+import {
+  generateStory,
+  randomizeStory,
+  getLLMConfig,
+  PACE_MIN_CHARS,
+} from "@/lib/llm-client";
 
 const GENRES = [
   { label: "奇幻冒险", emoji: "⚔️" },
@@ -41,6 +47,13 @@ const DIFFICULTIES: { label: DifficultyLevel; desc: string; emoji: string }[] =
     { label: "无随机", desc: "无骰子判定", emoji: "📖" },
   ];
 
+const PACES: { label: PaceLevel; desc: string; emoji: string }[] = [
+  { label: "慵懒", desc: "细节丰富，慢节奏", emoji: "🐢" },
+  { label: "轻松", desc: "平衡叙事节奏", emoji: "🍃" },
+  { label: "紧张", desc: "冲突更密集", emoji: "⚡" },
+  { label: "紧迫", desc: "短促高压推进", emoji: "🔥" },
+];
+
 export default function CreateStoryScreen() {
   const router = useRouter();
   const colors = useColors();
@@ -49,7 +62,9 @@ export default function CreateStoryScreen() {
   const [genre, setGenre] = useState("奇幻冒险");
   const [protagonistName, setProtagonistName] = useState("");
   const [protagonistDescription, setProtagonistDescription] = useState("");
+  const [protagonistAppearance, setProtagonistAppearance] = useState("");
   const [difficulty, setDifficulty] = useState<DifficultyLevel>("普通");
+  const [initialPacing, setInitialPacing] = useState<PaceLevel>("轻松");
   const [creating, setCreating] = useState(false);
   const [randomizing, setRandomizing] = useState(false);
 
@@ -77,6 +92,7 @@ export default function CreateStoryScreen() {
       setGenre(result.genre);
       setProtagonistName(result.protagonistName);
       setProtagonistDescription(result.protagonistDescription);
+      setProtagonistAppearance(result.protagonistAppearance ?? "");
       setPremise(result.premise);
     } catch (err) {
       Alert.alert("随机失败", err instanceof Error ? err.message : "未知错误");
@@ -116,6 +132,8 @@ export default function CreateStoryScreen() {
         protagonistName.trim(),
         protagonistDescription.trim(),
         difficulty,
+        initialPacing,
+        protagonistAppearance.trim(),
       );
 
       // Generate initial story segments
@@ -125,12 +143,16 @@ export default function CreateStoryScreen() {
         genre: story.genre,
         protagonistName: story.protagonistName,
         protagonistDescription: story.protagonistDescription,
+        protagonistAppearance: story.protagonistAppearance,
         difficulty: story.difficulty,
+        pacing: story.currentPacing,
       });
 
       if (result.segments && result.segments.length > 0) {
         story.segments = result.segments;
         story.currentIndex = 0;
+        story.currentPacing = result.pacing;
+        story.lastGeneratedChars = result.generatedChars;
         // Process new characters from initial generation
         if (result.newCharacters && result.newCharacters.length > 0) {
           for (const nc of result.newCharacters) {
@@ -149,6 +171,8 @@ export default function CreateStoryScreen() {
                 gender: nc.gender,
                 personality: nc.personality,
                 background: nc.background,
+                appearance: nc.appearance || "",
+                affinity: 0,
                 firstAppearance: 0,
               });
             }
@@ -292,6 +316,34 @@ export default function CreateStoryScreen() {
             />
           </View>
 
+          <View style={styles.section}>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              主角外貌
+            </Text>
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              可选，描述主角发色、瞳色、体型和穿着（通过顶部“随机”与故事一并生成）
+            </Text>
+            <TextInput
+              style={[
+                styles.textArea,
+                {
+                  backgroundColor: colors.surface,
+                  color: colors.foreground,
+                  borderColor: colors.border,
+                  minHeight: 80,
+                },
+              ]}
+              placeholder="例如：黑色短发，灰蓝色眼睛，身形修长，常穿深色风衣与长靴..."
+              placeholderTextColor={colors.muted}
+              value={protagonistAppearance}
+              onChangeText={setProtagonistAppearance}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              maxLength={200}
+            />
+          </View>
+
           {/* Genre Selection */}
           <View style={styles.section}>
             <Text style={[styles.label, { color: colors.foreground }]}>
@@ -388,6 +440,62 @@ export default function CreateStoryScreen() {
                       ]}
                     >
                       {d.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Initial Pacing Selection */}
+          <View style={styles.section}>
+            <Text style={[styles.label, { color: colors.foreground }]}>
+              初始剧情节奏
+            </Text>
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              影响首轮与后续生成的目标字数（默认轻松）
+            </Text>
+            <View style={styles.genreGrid}>
+              {PACES.map((pace) => {
+                const isSelected = initialPacing === pace.label;
+                return (
+                  <TouchableOpacity
+                    key={pace.label}
+                    onPress={() => {
+                      setInitialPacing(pace.label);
+                      if (Platform.OS !== "web") {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                    }}
+                    style={[
+                      styles.genreChip,
+                      {
+                        backgroundColor: isSelected
+                          ? colors.primary + "25"
+                          : colors.surface,
+                        borderColor: isSelected
+                          ? colors.primary
+                          : colors.border,
+                      },
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.genreEmoji}>{pace.emoji}</Text>
+                    <Text
+                      style={[
+                        styles.genreLabel,
+                        {
+                          color: isSelected
+                            ? colors.primary
+                            : colors.foreground,
+                          fontWeight: isSelected ? "700" : "500",
+                        },
+                      ]}
+                    >
+                      {pace.label}
+                    </Text>
+                    <Text style={[styles.paceHint, { color: colors.muted }]}>
+                      {PACE_MIN_CHARS[pace.label]}字
                     </Text>
                   </TouchableOpacity>
                 );
@@ -545,6 +653,9 @@ const styles = StyleSheet.create({
   },
   genreLabel: {
     fontSize: 14,
+  },
+  paceHint: {
+    fontSize: 12,
   },
   createButton: {
     flexDirection: "row",

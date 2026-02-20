@@ -44,16 +44,24 @@ export async function generateImage(prompt: string): Promise<string> {
     : `${baseUrl}/images/generations`;
 
   const imageSize = config.imageSize.trim();
+  const is16By9 = /^\s*(\d+)x(\d+)\s*$/i.test(imageSize)
+    ? (() => {
+        const match = imageSize.match(/^(\d+)x(\d+)$/i);
+        if (!match) return false;
+        const w = Number(match[1]);
+        const h = Number(match[2]);
+        return w > 0 && h > 0 && Math.abs(w / h - 16 / 9) < 0.02;
+      })()
+    : false;
+  const finalImageSize = is16By9 ? imageSize : "1280x720";
   const requestBody: Record<string, unknown> = {
     model: config.imageModel,
     prompt,
     n: 1,
   };
 
-  if (imageSize) {
-    requestBody.size = imageSize;
-    requestBody.image_size = imageSize; // 兼容部分提供商的字段命名
-  }
+  requestBody.size = finalImageSize;
+  requestBody.image_size = finalImageSize; // 兼容部分提供商的字段命名
 
   let response = await fetch(url, {
     method: "POST",

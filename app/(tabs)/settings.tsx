@@ -1,8 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Text, View, TouchableOpacity, StyleSheet, Alert, TextInput, ScrollView, Modal } from "react-native";
 import Constants from "expo-constants";
-import { useRouter } from "expo-router";
-
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
@@ -10,7 +8,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLLMConfig, saveLLMConfig, testAPIKey } from "@/lib/llm-client";
 import { getImageConfig, saveImageConfig } from "@/lib/image-client";
 import { setTestDiceValue } from "@/lib/dice";
-import { getActivePresetId, listPresets } from "@/lib/prompt-store";
 
 // 预设的 API 配置
 const API_PRESETS = [
@@ -63,22 +60,7 @@ const API_PRESETS = [
 
 export default function SettingsScreen() {
   const colors = useColors();
-  const router = useRouter();
   const appVersion = Constants.expoConfig?.version ?? "1.0.1";
-
-  // 提示词预设状态
-  const [activePresetName, setActivePresetName] = useState("默认");
-
-  const loadActivePresetName = useCallback(async () => {
-    const id = await getActivePresetId();
-    if (id === "default") {
-      setActivePresetName("默认");
-    } else {
-      const presets = await listPresets();
-      const active = presets.find((p) => p.id === id);
-      setActivePresetName(active?.name || "默认");
-    }
-  }, []);
 
   // AI API 配置状态
   const [apiKey, setApiKey] = useState("");
@@ -102,7 +84,6 @@ export default function SettingsScreen() {
   // 加载保存的配置
   useEffect(() => {
     loadConfig();
-    loadActivePresetName();
   }, []);
 
   async function loadConfig() {
@@ -322,23 +303,6 @@ export default function SettingsScreen() {
               <Text style={styles.primaryButtonText}>保存配置</Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        {/* Prompt Configuration */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>提示词配置</Text>
-          <TouchableOpacity
-            onPress={() => router.push("/prompt-settings" as any)}
-            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
-          >
-            <View style={styles.cardRow}>
-              <Text style={[styles.cardLabel, { color: colors.foreground }]}>管理提示词与预设</Text>
-              <View style={styles.cardValueRow}>
-                <Text style={[styles.cardValue, { color: colors.muted }]}>{activePresetName}</Text>
-                <IconSymbol name="chevron.right" size={16} color={colors.muted} />
-              </View>
-            </View>
-          </TouchableOpacity>
         </View>
 
         {/* Image Generation Section */}

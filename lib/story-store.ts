@@ -6,6 +6,8 @@ export type SegmentType = "narration" | "dialogue" | "choice";
 
 export type DifficultyLevel = "简单" | "普通" | "困难" | "噩梦" | "无随机";
 
+export type PaceLevel = "慵懒" | "轻松" | "紧张" | "紧迫";
+
 export interface DiceResult {
   /** Dice roll value (1-8) */
   roll: number;
@@ -28,6 +30,12 @@ export interface CharacterCard {
   personality: string;
   /** Background information */
   background: string;
+  /** Appearance description (hair, eyes, build, clothing, etc.) */
+  appearance: string;
+  /** URI of AI-generated character portrait image */
+  portraitUri?: string;
+  /** Affinity with protagonist (0-100) */
+  affinity: number;
   /** Segment index when character first appeared */
   firstAppearance: number;
 }
@@ -55,7 +63,11 @@ export interface ImagePromptRecord {
 
 export interface StorySummaryRecord {
   id: string;
+  /** Short title for this summary (max 10 chars) */
+  title: string;
   summary: string;
+  /** Names of characters involved in this summary segment */
+  involvedCharacters: string[];
   createdAt: number;
 }
 
@@ -66,6 +78,7 @@ export interface Story {
   genre: string;
   protagonistName: string;
   protagonistDescription: string;
+  protagonistAppearance: string;
   createdAt: number;
   updatedAt: number;
   /** All segments accumulated so far */
@@ -78,8 +91,16 @@ export interface Story {
   choiceCount: number;
   /** AI-generated summary of story so far, used to compress long history */
   storySummary: string;
+  /** Current narrative pacing level evaluated by AI */
+  currentPacing: PaceLevel;
+  /** Total text chars generated in latest AI batch */
+  lastGeneratedChars: number;
+  /** Latest AI-generated plot batch used for image prompt input */
+  latestGeneratedContext: string;
   /** URI of the current background image (base64 data URI or remote URL) */
   backgroundImageUri?: string;
+  /** URI of protagonist portrait image */
+  protagonistPortraitUri?: string;
   /** Current image generation status for user-facing feedback */
   imageGenerationStatus: "idle" | "generating" | "success" | "failed";
   /** Timestamp of the latest image generation attempt */
@@ -107,28 +128,33 @@ function generateId(): string {
 
 /** Build a condensed history string from segments.
  *  If a summary exists, prepend it and only include the most recent segments. */
+function formatHistorySegment(s: StorySegment): string {
+  let base = "";
+  if (s.type === "narration") base = `[旁白] ${s.text}`;
+  else if (s.type === "dialogue") base = `[${s.character}] ${s.text}`;
+  else if (s.type === "choice") base = `[选择] ${s.text}`;
+  else base = s.text;
+  if (s.diceResult) {
+    base += ` [骰子:${s.diceResult.roll}/${s.diceResult.judgmentValue}=${s.diceResult.outcome}]`;
+  }
+  return base;
+}
+
+/** Build full (uncompressed) history string from all segments. */
+export function buildFullHistoryContext(segments: StorySegment[]): string {
+  return segments.map(formatHistorySegment).join("\n");
+}
+
 export function buildHistoryContext(
   segments: StorySegment[],
   storySummary = "",
 ): string {
-  const formatSegment = (s: StorySegment) => {
-    let base = "";
-    if (s.type === "narration") base = `[旁白] ${s.text}`;
-    else if (s.type === "dialogue") base = `[${s.character}] ${s.text}`;
-    else if (s.type === "choice") base = `[选择] ${s.text}`;
-    else base = s.text;
-    if (s.diceResult) {
-      base += ` [骰子:${s.diceResult.roll}/${s.diceResult.judgmentValue}=${s.diceResult.outcome}]`;
-    }
-    return base;
-  };
-
   if (storySummary) {
-    const recent = segments.slice(-15).map(formatSegment).join("\n");
+    const recent = segments.slice(-15).map(formatHistorySegment).join("\n");
     return `[剧情摘要]\n${storySummary}\n\n[最近剧情]\n${recent}`;
   }
 
-  return segments.slice(-30).map(formatSegment).join("\n");
+  return segments.slice(-30).map(formatHistorySegment).join("\n");
 }
 
 // ─── CRUD ────────────────────────────────────────────────────────────
@@ -152,10 +178,28 @@ function migrateStory(story: Story): Story {
     isNameRevealed:
       card.isNameRevealed ??
       !/(陌生|神秘|无名|未知|男人|女人|来客|路人)/.test(card.name),
+    appearance: card.appearance || "",
+    affinity:
+      typeof card.affinity === "number"
+        ? Math.max(0, Math.min(100, Math.round(card.affinity)))
+        : 0,
   }));
+  // Migrate summaryHistory records to new format
+  if (story.summaryHistory) {
+    story.summaryHistory = story.summaryHistory.map((rec: any) => ({
+      ...rec,
+      title: rec.title || "",
+      involvedCharacters: rec.involvedCharacters || [],
+    }));
+  }
   if (!story.imageGenerationStatus) story.imageGenerationStatus = "idle";
   if (!story.imagePromptHistory) story.imagePromptHistory = [];
   if (!story.summaryHistory) story.summaryHistory = [];
+  if (!story.currentPacing) story.currentPacing = "轻松";
+  if (!story.lastGeneratedChars) story.lastGeneratedChars = 0;
+  if (!story.latestGeneratedContext) story.latestGeneratedContext = "";
+  if (!story.protagonistPortraitUri) story.protagonistPortraitUri = "";
+  if (!story.protagonistAppearance) story.protagonistAppearance = "";
   return story;
 }
 
@@ -183,6 +227,8 @@ export async function createStory(
   protagonistName: string,
   protagonistDescription: string,
   difficulty: DifficultyLevel = "普通",
+  initialPacing: PaceLevel = "轻松",
+  protagonistAppearance = "",
 ): Promise<Story> {
   const id = generateId();
   const now = Date.now();
@@ -193,6 +239,7 @@ export async function createStory(
     genre,
     protagonistName,
     protagonistDescription,
+    protagonistAppearance,
     createdAt: now,
     updatedAt: now,
     segments: [],
@@ -200,6 +247,10 @@ export async function createStory(
     historyContext: "",
     choiceCount: 0,
     storySummary: "",
+    currentPacing: initialPacing,
+    lastGeneratedChars: 0,
+    latestGeneratedContext: "",
+    protagonistPortraitUri: "",
     imageGenerationStatus: "idle",
     imagePromptHistory: [],
     summaryHistory: [],
