@@ -1,14 +1,18 @@
-﻿import Fastify from "fastify";
 import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import Fastify from "fastify";
+
 import { config } from "./config.js";
-import { AppError } from "./utils/errors.js";
+import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
 import { promptRoutes } from "./routes/prompts.js";
 import { storyRoutes } from "./routes/stories.js";
-import { adminRoutes } from "./routes/admin.js";
+import { AppError } from "./utils/errors.js";
 
 const app = Fastify({
+  trustProxy: config.trustProxy,
+  bodyLimit: 1024 * 1024,
   logger: {
     level: "info",
     transport:
@@ -23,9 +27,14 @@ await app.register(cors, {
   credentials: true,
 });
 
+await app.register(helmet, {
+  global: true,
+  contentSecurityPolicy: false,
+});
+
 await app.register(rateLimit, {
-  max: 100,
-  timeWindow: "1 minute",
+  max: config.rateLimitGlobalMax,
+  timeWindow: config.rateLimitGlobalWindow,
 });
 
 app.setErrorHandler((error, request, reply) => {

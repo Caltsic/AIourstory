@@ -20,3 +20,17 @@
 - [x] 已更新 `BUG.md` 修复记录。
 - [x] `pnpm run check` 通过。
 - [x] `server/pnpm run build` 通过。
+## 24. Security Hardening (This round)
+### 24.1 ToDo
+- [ ] Add backend security headers (`@fastify/helmet`).
+- [ ] Split rate limits by route sensitivity (auth/admin stricter).
+- [ ] Add production safety validation in config (JWT secret length, sane defaults).
+- [ ] Create `SECURITY.md` with actionable server hardening checklist.
+- [ ] Run `pnpm run check` and `server/pnpm run build`.
+### 24.2 Result
+- [x] Added backend security headers via `@fastify/helmet`.
+- [x] Added stricter route-level limits for auth/admin endpoints.
+- [x] Added production config safety checks (`JWT_SECRET` length, proxy/rate defaults).
+- [x] Added `server/SECURITY.md` hardening runbook.
+- [x] `pnpm run check` passed.
+- [x] `server/pnpm run build` passed.

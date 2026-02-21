@@ -1,9 +1,11 @@
-﻿import { FastifyInstance } from "fastify";
-import { requireAdmin } from "../middleware/auth.js";
+import { desc, eq } from "drizzle-orm";
+import { FastifyInstance } from "fastify";
+
+import { config } from "../config.js";
 import { db } from "../db/index.js";
 import { promptPresets, storySettings, users } from "../db/schema.js";
-import { eq, desc } from "drizzle-orm";
-import { notFound, badRequest } from "../utils/errors.js";
+import { requireAdmin } from "../middleware/auth.js";
+import { badRequest, notFound } from "../utils/errors.js";
 
 function safeJsonArray(input: string): string[] {
   try {
@@ -14,70 +16,85 @@ function safeJsonArray(input: string): string[] {
   }
 }
 
+const adminRateLimitConfig = {
+  rateLimit: {
+    max: config.rateLimitAdminMax,
+    timeWindow: config.rateLimitAdminWindow,
+  },
+} as const;
+
 export async function adminRoutes(app: FastifyInstance) {
-  app.get("/admin/review/prompts", { preHandler: [requireAdmin] }, async () => {
-    const items = await db
-      .select()
-      .from(promptPresets)
-      .where(eq(promptPresets.status, "pending"))
-      .orderBy(desc(promptPresets.createdAt));
+  app.get(
+    "/admin/review/prompts",
+    { preHandler: [requireAdmin], config: adminRateLimitConfig },
+    async () => {
+      const items = await db
+        .select()
+        .from(promptPresets)
+        .where(eq(promptPresets.status, "pending"))
+        .orderBy(desc(promptPresets.createdAt));
 
-    return Promise.all(
-      items.map(async (item) => {
-        const author = await db
-          .select({ uuid: users.uuid, nickname: users.nickname, username: users.username })
-          .from(users)
-          .where(eq(users.id, item.authorId))
-          .get();
-        return {
-          uuid: item.uuid,
-          name: item.name,
-          description: item.description,
-          promptsJson: item.promptsJson,
-          tags: safeJsonArray(item.tags),
-          createdAt: item.createdAt,
-          author: author ?? { uuid: "", nickname: "未知", username: null },
-        };
-      })
-    );
-  });
+      return Promise.all(
+        items.map(async (item) => {
+          const author = await db
+            .select({ uuid: users.uuid, nickname: users.nickname, username: users.username })
+            .from(users)
+            .where(eq(users.id, item.authorId))
+            .get();
+          return {
+            uuid: item.uuid,
+            name: item.name,
+            description: item.description,
+            promptsJson: item.promptsJson,
+            tags: safeJsonArray(item.tags),
+            createdAt: item.createdAt,
+            author: author ?? { uuid: "", nickname: "未知", username: null },
+          };
+        })
+      );
+    }
+  );
 
-  app.get("/admin/review/stories", { preHandler: [requireAdmin] }, async () => {
-    const items = await db
-      .select()
-      .from(storySettings)
-      .where(eq(storySettings.status, "pending"))
-      .orderBy(desc(storySettings.createdAt));
+  app.get(
+    "/admin/review/stories",
+    { preHandler: [requireAdmin], config: adminRateLimitConfig },
+    async () => {
+      const items = await db
+        .select()
+        .from(storySettings)
+        .where(eq(storySettings.status, "pending"))
+        .orderBy(desc(storySettings.createdAt));
 
-    return Promise.all(
-      items.map(async (item) => {
-        const author = await db
-          .select({ uuid: users.uuid, nickname: users.nickname, username: users.username })
-          .from(users)
-          .where(eq(users.id, item.authorId))
-          .get();
-        return {
-          uuid: item.uuid,
-          title: item.title,
-          premise: item.premise,
-          genre: item.genre,
-          protagonistName: item.protagonistName,
-          protagonistDescription: item.protagonistDescription,
-          protagonistAppearance: item.protagonistAppearance,
-          difficulty: item.difficulty,
-          initialPacing: item.initialPacing,
-          extraDescription: item.extraDescription,
-          tags: safeJsonArray(item.tags),
-          createdAt: item.createdAt,
-          author: author ?? { uuid: "", nickname: "未知", username: null },
-        };
-      })
-    );
-  });
+      return Promise.all(
+        items.map(async (item) => {
+          const author = await db
+            .select({ uuid: users.uuid, nickname: users.nickname, username: users.username })
+            .from(users)
+            .where(eq(users.id, item.authorId))
+            .get();
+          return {
+            uuid: item.uuid,
+            title: item.title,
+            premise: item.premise,
+            genre: item.genre,
+            protagonistName: item.protagonistName,
+            protagonistDescription: item.protagonistDescription,
+            protagonistAppearance: item.protagonistAppearance,
+            difficulty: item.difficulty,
+            initialPacing: item.initialPacing,
+            extraDescription: item.extraDescription,
+            tags: safeJsonArray(item.tags),
+            createdAt: item.createdAt,
+            author: author ?? { uuid: "", nickname: "未知", username: null },
+          };
+        })
+      );
+    }
+  );
 
   app.post<{ Params: { type: string; uuid: string } }>(
     "/admin/review/:type/:uuid/approve",
-    { preHandler: [requireAdmin] },
+    { preHandler: [requireAdmin], config: adminRateLimitConfig },
     async (request) => {
       const { type, uuid } = request.params;
       const adminUser = await db
@@ -118,7 +135,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { type: string; uuid: string }; Body: { reason: string } }>(
     "/admin/review/:type/:uuid/reject",
-    { preHandler: [requireAdmin] },
+    { preHandler: [requireAdmin], config: adminRateLimitConfig },
     async (request) => {
       const { type, uuid } = request.params;
       const { reason } = request.body;

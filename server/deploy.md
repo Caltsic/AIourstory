@@ -31,3 +31,7 @@ Serve with Caddy path or a dedicated admin subdomain.
 ```bash
 sqlite3 /opt/aistory/data/aistory.db ".backup '/opt/aistory/backups/aistory-$(date +%F-%H%M).db'"
 ```
+
+## Security hardening
+
+See `server/SECURITY.md` for the full checklist (secret rotation, `/admin` basic auth, firewall, fail2ban, and maintenance cadence).
