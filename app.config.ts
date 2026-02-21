@@ -9,10 +9,14 @@ const env = {
   androidPackage: "com.aistorygame.app",
 };
 
+const allowInsecureHttp =
+  process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === "1" ||
+  process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === "true";
+
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
-  version: "1.0.11",
+  version: "1.0.12",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
@@ -89,6 +93,7 @@ const config: ExpoConfig = {
         android: {
           buildArchs: ["armeabi-v7a", "arm64-v8a"],
           minSdkVersion: 24,
+          usesCleartextTraffic: allowInsecureHttp,
         },
       },
     ],

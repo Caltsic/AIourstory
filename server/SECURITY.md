@@ -134,3 +134,20 @@ tail -n 200 /var/log/nginx/error.log
 - [ ] Weekly: `apt update && apt upgrade -y`
 - [ ] Weekly: dependency audit and patch (`pnpm audit`)
 - [ ] Monthly: rotate admin password and review IP allowlist/denylist
+
+## 9. Manual admin role management
+Do not auto-promote admin by username in production.
+
+Grant admin role:
+
+```bash
+cd /opt/aistory/ai-story-game/server
+pnpm run admin:grant -- --username <target_username>
+```
+
+Revoke admin role:
+
+```bash
+cd /opt/aistory/ai-story-game/server
+pnpm run admin:revoke -- --username <target_username>
+```

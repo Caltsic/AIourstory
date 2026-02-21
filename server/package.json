@@ -9,7 +9,10 @@
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "user:role": "tsx src/scripts/set-user-role.ts",
+    "admin:grant": "tsx src/scripts/set-user-role.ts --role admin",
+    "admin:revoke": "tsx src/scripts/set-user-role.ts --role user"
   },
   "dependencies": {
     "@fastify/helmet": "^13.0.2",

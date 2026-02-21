@@ -31,11 +31,6 @@ export const config = {
   jwtAccessExpires: process.env.JWT_ACCESS_EXPIRES || "15m",
   jwtRefreshExpires: process.env.JWT_REFRESH_EXPIRES || "30d",
 
-  adminUsernames: (process.env.ADMIN_USERNAMES || "admin")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
-
   corsOrigins: (process.env.CORS_ORIGINS || "http://localhost:8081")
     .split(",")
     .map((s) => s.trim())

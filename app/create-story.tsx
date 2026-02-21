@@ -21,6 +21,7 @@ import {
   updateStory,
   type DifficultyLevel,
   type PaceLevel,
+  type StorySegment,
 } from "@/lib/story-store";
 import {
   generateStory,
@@ -29,9 +30,42 @@ import {
   PACE_MIN_CHARS,
 } from "@/lib/llm-client";
 
-const GENRES = ["奇幻冒险", "校园日常", "悬疑推理", "都市情感", "古风仙侠", "自定义"];
-const DIFFICULTIES: DifficultyLevel[] = ["简单", "普通", "困难", "噩梦", "无随机"];
+const GENRES = [
+  "奇幻冒险",
+  "校园日常",
+  "悬疑推理",
+  "都市情感",
+  "古风仙侠",
+  "自定义",
+];
+const DIFFICULTIES: DifficultyLevel[] = [
+  "简单",
+  "普通",
+  "困难",
+  "噩梦",
+  "无随机",
+];
 const PACES: PaceLevel[] = ["慵懒", "轻松", "紧张", "紧迫"];
+
+function ensureChoiceSegment(segments: StorySegment[]): StorySegment[] {
+  const hasChoice = segments.some(
+    (segment) =>
+      segment.type === "choice" &&
+      Array.isArray(segment.choices) &&
+      segment.choices.length > 0,
+  );
+
+  if (hasChoice) return segments;
+
+  return [
+    ...segments,
+    {
+      type: "choice",
+      text: "接下来你要怎么做？",
+      choices: ["继续当前行动", "先观察周围情况", "与关键人物对话"],
+    },
+  ];
+}
 
 export default function CreateStoryScreen() {
   const router = useRouter();
@@ -52,24 +86,31 @@ export default function CreateStoryScreen() {
   useEffect(() => {
     if (typeof params.title === "string") setTitle(params.title);
     if (typeof params.premise === "string") setPremise(params.premise);
-    if (typeof params.genre === "string" && params.genre) setGenre(params.genre);
-    if (typeof params.protagonistName === "string") setProtagonistName(params.protagonistName);
+    if (typeof params.genre === "string" && params.genre)
+      setGenre(params.genre);
+    if (typeof params.protagonistName === "string")
+      setProtagonistName(params.protagonistName);
     if (typeof params.protagonistDescription === "string") {
       setProtagonistDescription(params.protagonistDescription);
     }
     if (typeof params.protagonistAppearance === "string") {
       setProtagonistAppearance(params.protagonistAppearance);
     }
-    if (typeof params.difficulty === "string") setDifficulty(params.difficulty as DifficultyLevel);
-    if (typeof params.initialPacing === "string") setInitialPacing(params.initialPacing as PaceLevel);
+    if (typeof params.difficulty === "string")
+      setDifficulty(params.difficulty as DifficultyLevel);
+    if (typeof params.initialPacing === "string")
+      setInitialPacing(params.initialPacing as PaceLevel);
   }, [params]);
 
   const canCreate =
-    title.trim().length > 0 && premise.trim().length > 0 && protagonistName.trim().length > 0;
+    title.trim().length > 0 &&
+    premise.trim().length > 0 &&
+    protagonistName.trim().length > 0;
 
   async function handleRandomize() {
     if (randomizing || creating) return;
-    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== "web")
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const config = await getLLMConfig();
     if (!config.apiKey) {
@@ -98,7 +139,8 @@ export default function CreateStoryScreen() {
 
   async function handleCreate() {
     if (!canCreate || creating) return;
-    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (Platform.OS !== "web")
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     const config = await getLLMConfig();
     if (!config.apiKey) {
@@ -119,7 +161,7 @@ export default function CreateStoryScreen() {
         protagonistDescription.trim(),
         difficulty,
         initialPacing,
-        protagonistAppearance.trim()
+        protagonistAppearance.trim(),
       );
 
       const generated = await generateStory({
@@ -133,7 +175,7 @@ export default function CreateStoryScreen() {
         pacing: story.currentPacing,
       });
 
-      story.segments = generated.segments || [];
+      story.segments = ensureChoiceSegment(generated.segments || []);
       story.currentIndex = 0;
       story.currentPacing = generated.pacing;
       story.lastGeneratedChars = generated.generatedChars;
@@ -187,18 +229,35 @@ export default function CreateStoryScreen() {
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={[styles.header, { borderBottomColor: colors.border }]}> 
-          <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.headerBtn}
+          >
             <IconSymbol name="arrow.left" size={22} color={colors.foreground} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>创建故事</Text>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+            创建故事
+          </Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <TouchableOpacity onPress={handleShareToPlaza} style={styles.headerBtn}>
-              <IconSymbol name="person.2.fill" size={18} color={colors.primary} />
+            <TouchableOpacity
+              onPress={handleShareToPlaza}
+              style={styles.headerBtn}
+            >
+              <IconSymbol
+                name="person.2.fill"
+                size={18}
+                color={colors.primary}
+              />
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleRandomize} style={styles.headerBtn}>
+            <TouchableOpacity
+              onPress={handleRandomize}
+              style={styles.headerBtn}
+            >
               {randomizing ? (
-                <Text style={{ color: colors.primary, fontSize: 12 }}>生成中</Text>
+                <Text style={{ color: colors.primary, fontSize: 12 }}>
+                  生成中
+                </Text>
               ) : (
                 <IconSymbol name="dice" size={18} color={colors.primary} />
               )}
@@ -206,8 +265,16 @@ export default function CreateStoryScreen() {
           </View>
         </View>
 
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <LabeledInput label="故事标题" value={title} onChangeText={setTitle} colors={colors} />
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          <LabeledInput
+            label="故事标题"
+            value={title}
+            onChangeText={setTitle}
+            colors={colors}
+          />
 
           <LabeledInput
             label="主角姓名"
@@ -222,6 +289,7 @@ export default function CreateStoryScreen() {
             onChangeText={setProtagonistDescription}
             colors={colors}
             multiline
+            helperText="示例：冷静敏锐的实习侦探，擅长观察细节，但不善表达情绪。"
           />
 
           <LabeledInput
@@ -230,9 +298,12 @@ export default function CreateStoryScreen() {
             onChangeText={setProtagonistAppearance}
             colors={colors}
             multiline
+            helperText="示例：黑色短发，灰蓝色眼睛，常穿深色风衣与长靴，动作利落。"
           />
 
-          <Text style={[styles.label, { color: colors.foreground }]}>故事类型</Text>
+          <Text style={[styles.label, { color: colors.foreground }]}>
+            故事类型
+          </Text>
           <View style={styles.chipsRow}>
             {GENRES.map((item) => (
               <TouchableOpacity
@@ -241,12 +312,20 @@ export default function CreateStoryScreen() {
                 style={[
                   styles.chip,
                   {
-                    borderColor: genre === item ? colors.primary : colors.border,
-                    backgroundColor: genre === item ? `${colors.primary}20` : colors.surface,
+                    borderColor:
+                      genre === item ? colors.primary : colors.border,
+                    backgroundColor:
+                      genre === item ? `${colors.primary}20` : colors.surface,
                   },
                 ]}
               >
-                <Text style={{ color: genre === item ? colors.primary : colors.foreground }}>{item}</Text>
+                <Text
+                  style={{
+                    color: genre === item ? colors.primary : colors.foreground,
+                  }}
+                >
+                  {item}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -260,17 +339,30 @@ export default function CreateStoryScreen() {
                 style={[
                   styles.chip,
                   {
-                    borderColor: difficulty === item ? colors.primary : colors.border,
-                    backgroundColor: difficulty === item ? `${colors.primary}20` : colors.surface,
+                    borderColor:
+                      difficulty === item ? colors.primary : colors.border,
+                    backgroundColor:
+                      difficulty === item
+                        ? `${colors.primary}20`
+                        : colors.surface,
                   },
                 ]}
               >
-                <Text style={{ color: difficulty === item ? colors.primary : colors.foreground }}>{item}</Text>
+                <Text
+                  style={{
+                    color:
+                      difficulty === item ? colors.primary : colors.foreground,
+                  }}
+                >
+                  {item}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          <Text style={[styles.label, { color: colors.foreground }]}>初始节奏</Text>
+          <Text style={[styles.label, { color: colors.foreground }]}>
+            初始节奏
+          </Text>
           <View style={styles.chipsRow}>
             {PACES.map((item) => (
               <TouchableOpacity
@@ -279,12 +371,23 @@ export default function CreateStoryScreen() {
                 style={[
                   styles.chip,
                   {
-                    borderColor: initialPacing === item ? colors.primary : colors.border,
-                    backgroundColor: initialPacing === item ? `${colors.primary}20` : colors.surface,
+                    borderColor:
+                      initialPacing === item ? colors.primary : colors.border,
+                    backgroundColor:
+                      initialPacing === item
+                        ? `${colors.primary}20`
+                        : colors.surface,
                   },
                 ]}
               >
-                <Text style={{ color: initialPacing === item ? colors.primary : colors.foreground }}>
+                <Text
+                  style={{
+                    color:
+                      initialPacing === item
+                        ? colors.primary
+                        : colors.foreground,
+                  }}
+                >
                   {item} ({PACE_MIN_CHARS[item]}字)
                 </Text>
               </TouchableOpacity>
@@ -298,6 +401,7 @@ export default function CreateStoryScreen() {
             colors={colors}
             multiline
             minHeight={140}
+            helperText="示例：暴雨夜，城市博物馆的古钟失窃，你在案发现场发现一枚不属于馆方的旧钥匙。"
           />
 
           <TouchableOpacity
@@ -309,7 +413,9 @@ export default function CreateStoryScreen() {
             ]}
           >
             <IconSymbol name="play.fill" size={18} color="#fff" />
-            <Text style={styles.createText}>{creating ? "创建中..." : "开始冒险"}</Text>
+            <Text style={styles.createText}>
+              {creating ? "创建中..." : "开始冒险"}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -324,6 +430,7 @@ function LabeledInput({
   colors,
   multiline = false,
   minHeight,
+  helperText,
 }: {
   label: string;
   value: string;
@@ -331,10 +438,16 @@ function LabeledInput({
   colors: ReturnType<typeof useColors>;
   multiline?: boolean;
   minHeight?: number;
+  helperText?: string;
 }) {
   return (
     <View style={styles.section}>
       <Text style={[styles.label, { color: colors.foreground }]}>{label}</Text>
+      {helperText ? (
+        <Text style={[styles.helperText, { color: colors.muted }]}>
+          {helperText}
+        </Text>
+      ) : null}
       <TextInput
         value={value}
         onChangeText={onChangeText}
@@ -374,6 +487,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 10, paddingBottom: 28 },
   section: { gap: 6 },
   label: { fontSize: 14, fontWeight: "700" },
+  helperText: { fontSize: 12, lineHeight: 18 },
   input: {
     borderWidth: 1,
     borderRadius: 10,
@@ -382,7 +496,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 8 },
+  chip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
   createBtn: {
     marginTop: 8,
     borderRadius: 12,

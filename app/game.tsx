@@ -17,10 +17,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import Animated, {
-  FadeIn,
-  FadeInDown,
-} from "react-native-reanimated";
+import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -176,6 +173,10 @@ export default function GameScreen() {
   const [viewIndex, setViewIndex] = useState(0);
   const currentSegment = story?.segments[viewIndex] ?? null;
   const isChoice = currentSegment?.type === "choice";
+  const hasUsableChoices =
+    isChoice &&
+    Array.isArray(currentSegment?.choices) &&
+    currentSegment.choices.length > 0;
   const currentFullHistoryChars = buildFullHistoryContext(
     story?.segments ?? [],
   ).trim().length;
@@ -254,6 +255,34 @@ export default function GameScreen() {
     }, 180);
     return () => clearTimeout(timer);
   }, [showSummaryHistory]);
+
+  useEffect(() => {
+    if (!story || !currentSegment || currentSegment.type !== "choice") return;
+    if (
+      Array.isArray(currentSegment.choices) &&
+      currentSegment.choices.length > 0
+    )
+      return;
+
+    const fallbackChoices = [
+      "继续当前行动",
+      "先观察周围情况",
+      "与关键人物对话",
+    ];
+    const patched: StorySegment = {
+      ...currentSegment,
+      text: currentSegment.text?.trim() || "接下来你要怎么做？",
+      choices: fallbackChoices,
+      judgmentValues:
+        story.difficulty === "无随机"
+          ? undefined
+          : fallbackChoices.map(() => null),
+    };
+
+    story.segments[viewIndex] = patched;
+    void updateStory(story);
+    setStory({ ...story });
+  }, [story, currentSegment, viewIndex]);
 
   async function loadStory() {
     setLoading(true);
@@ -916,7 +945,7 @@ export default function GameScreen() {
   // Advance to next segment
   function handleTap() {
     if (!story || !currentSegment) return;
-    if (isChoice) return; // Don't advance on choice segments
+    if (hasUsableChoices) return; // Don't advance on actionable choice segments
     if (!done) {
       skip();
       return;
@@ -1362,7 +1391,7 @@ export default function GameScreen() {
               )}
 
               {/* Choices */}
-              {isChoice && currentSegment.choices && (
+              {hasUsableChoices && currentSegment.choices && (
                 <View style={styles.choicesContainer}>
                   <Text style={[styles.choicePrompt, { color: colors.muted }]}>
                     {currentSegment.text}

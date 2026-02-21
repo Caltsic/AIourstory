@@ -1,12 +1,15 @@
 ﻿import { Platform } from "react-native";
+import axios from "axios";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ApiUser, AuthResult } from "@shared/api-types";
 import {
   apiClient,
+  getApiBaseUrl,
   initializeApiClient,
-  rawApiClient,
   parseApiError,
+  rawApiClient,
+  setApiBaseUrl,
   setAuthHooks,
 } from "@/lib/api-client";
 
@@ -122,6 +125,35 @@ async function applyAuthResult(result: AuthResult) {
   });
 }
 
+function isAxiosNetworkError(error: unknown) {
+  return axios.isAxiosError(error) && !error.response;
+}
+
+function buildApiBaseFallbacks(current: string) {
+  const candidates = new Set<string>([current]);
+
+  try {
+    const parsed = new URL(current);
+    if (parsed.protocol === "https:") {
+      const httpCandidate = new URL(current);
+      httpCandidate.protocol = "http:";
+      if (!httpCandidate.port) {
+        httpCandidate.port = "3000";
+      }
+      candidates.add(httpCandidate.toString().replace(/\/+$/, ""));
+    } else if (parsed.protocol === "http:" && !parsed.port) {
+      const withPort = new URL(current);
+      withPort.port = "3000";
+      candidates.add(withPort.toString().replace(/\/+$/, ""));
+    }
+  } catch {
+    // keep original candidate only
+  }
+
+  candidates.add("http://8.137.71.118:3000/v1");
+  return Array.from(candidates);
+}
+
 export async function refreshAuthTokens() {
   if (!state.refreshToken) return false;
 
@@ -140,8 +172,28 @@ export async function refreshAuthTokens() {
 
 export async function ensureDeviceSession() {
   const deviceId = await getOrCreateDeviceId();
-  const response = await rawApiClient.post<AuthResult>("/auth/device-login", { deviceId });
-  await applyAuthResult(response.data);
+  const originalBaseUrl = getApiBaseUrl();
+  const baseCandidates = buildApiBaseFallbacks(originalBaseUrl);
+  let lastError: unknown;
+
+  for (const baseCandidate of baseCandidates) {
+    try {
+      if (baseCandidate !== getApiBaseUrl()) {
+        setApiBaseUrl(baseCandidate);
+      }
+      const response = await rawApiClient.post<AuthResult>("/auth/device-login", { deviceId });
+      await applyAuthResult(response.data);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isAxiosNetworkError(error)) {
+        break;
+      }
+    }
+  }
+
+  setApiBaseUrl(originalBaseUrl);
+  throw lastError;
 }
 
 export async function initAuth() {
@@ -173,7 +225,7 @@ export async function initAuth() {
       await ensureDeviceSession();
     }
   } catch (error) {
-    console.warn("initAuth failed:", error);
+    console.warn("initAuth failed:", error, "apiBaseUrl:", getApiBaseUrl());
   } finally {
     setState({ initialized: true, loading: false });
   }
@@ -259,3 +311,5 @@ setAuthHooks({
   getAccessToken: async () => state.accessToken,
   refreshAuth: refreshAuthTokens,
 });
+
+

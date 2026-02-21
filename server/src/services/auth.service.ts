@@ -5,7 +5,6 @@ import { db } from "../db/index.js";
 import { users, refreshTokens } from "../db/schema.js";
 import { signAccessToken, signRefreshToken, verifyToken } from "../utils/jwt.js";
 import { badRequest, unauthorized, conflict, notFound } from "../utils/errors.js";
-import { config } from "../config.js";
 
 const BCRYPT_ROUNDS = 10;
 
@@ -146,7 +145,6 @@ export async function register(
   }
 
   const passwordHash = await hashPassword(password);
-  const role: "user" | "admin" = config.adminUsernames.includes(username) ? "admin" : "user";
 
   await db
     .update(users)
@@ -156,7 +154,7 @@ export async function register(
       nickname: nickname || username,
       deviceId: null,
       isBound: true,
-      role,
+      role: "user",
       updatedAt: new Date().toISOString(),
     })
     .where(eq(users.id, user.id));
