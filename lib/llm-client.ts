@@ -134,10 +134,10 @@ export interface LLMResponse {
 }
 
 export const PACE_MIN_CHARS: Record<PaceLevel, number> = {
-  慵懒: 3000,
-  轻松: 2000,
-  紧张: 1500,
-  紧迫: 1000,
+  慵懒: 2200,
+  轻松: 1500,
+  紧张: 1100,
+  紧迫: 800,
 };
 
 const DEFAULT_PACE: PaceLevel = "轻松";
@@ -182,8 +182,52 @@ function buildPacingStructureConstraint(requiredPacing: PaceLevel): string {
   return "结构配额（推理向）：8-10 个 segments；至少 1 次硬后果（暴露/受伤/证物损失/关系破裂）并抛出倒计时悬念；至少 1 条关键线索与 1 个矛盾证词。";
 }
 
-const MAX_HISTORY_CHARS = 8000;
+export const HISTORY_CONTEXT_CHARS_LIMIT = 4500;
+const MAX_HISTORY_CHARS = HISTORY_CONTEXT_CHARS_LIMIT;
 const CONTINUE_REQUEST_TIMEOUT_MS = 90_000;
+const HIGH_UNCERTAINTY_ACTION_PATTERNS = [
+  /尝试|试图/,
+  /强行|硬闯|蛮力|撞开|破门|砸开/,
+  /撬锁|开锁|破解|解锁|黑入|入侵/,
+  /翻越|攀爬|跳下|潜入/,
+  /躲避|逃脱|甩开|反追踪/,
+  /说服|谈判|威胁|欺骗|伪装|套话/,
+  /搏斗|反击|制服|抢夺|夺取|袭击/,
+  /拆弹|急救|手术|修复|调试/,
+  /赌一把|冒险/,
+];
+const ROUTINE_ACTION_PATTERNS = [
+  /接电话|打电话|挂电话/,
+  /观察|查看|环顾|看向|听/,
+  /敲门|开门|关门/,
+  /走进|离开|跟上|转身/,
+  /询问|对话|打招呼|回应/,
+  /等待|整理|坐下|站起/,
+];
+const HIGH_RISK_CONTEXT_PATTERNS = [
+  /卡住|上锁|封死|塌陷|爆炸|火势|毒气|追兵|倒计时/,
+  /枪|刀|坠落|窒息|中毒|重伤/,
+];
+
+export function shouldRequireDiceCheck(
+  action: string,
+  contextSnippet = "",
+): boolean {
+  const actionText = (action ?? "").replace(/\s+/g, "");
+  if (!actionText) return false;
+
+  if (HIGH_UNCERTAINTY_ACTION_PATTERNS.some((rule) => rule.test(actionText))) {
+    return true;
+  }
+
+  if (ROUTINE_ACTION_PATTERNS.some((rule) => rule.test(actionText))) {
+    const ctx = (contextSnippet ?? "").replace(/\s+/g, "").slice(-220);
+    return HIGH_RISK_CONTEXT_PATTERNS.some((rule) => rule.test(ctx));
+  }
+
+  // 默认保守：没有明显风险信号时，不触发判定。
+  return false;
+}
 
 function clampHistoryForPrompt(history: string): string {
   const normalized = history?.trim() ?? "";
@@ -243,6 +287,128 @@ function extractJsonPayload(content: string): string {
   throw new Error("无法解析 AI 返回的内容");
 }
 
+function normalizeJsonLikeText(raw: string): string {
+  return raw
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
+}
+
+function replaceSingleQuotedJsonLiterals(raw: string): string {
+  const quotedKey = /([{,]\s*)'([^'\\]*(?:\\.[^'\\]*)*)'\s*:/g;
+  const quotedValue = /:\s*'([^'\\]*(?:\\.[^'\\]*)*)'(\s*[,}\]])/g;
+  let next = raw.replace(quotedKey, (_m, prefix: string, key: string) => {
+    return `${prefix}"${key.replace(/"/g, '\\"')}":`;
+  });
+  next = next.replace(
+    quotedValue,
+    (_m, value: string, suffix: string) =>
+      `: "${value.replace(/"/g, '\\"')}"${suffix}`,
+  );
+  return next;
+}
+
+function removeTrailingCommas(raw: string): string {
+  return raw.replace(/,\s*([}\]])/g, "$1");
+}
+
+function balanceJsonClosings(raw: string): string {
+  let text = raw;
+  const stack: ("}" | "]")[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      stack.push("}");
+      continue;
+    }
+    if (ch === "[") {
+      stack.push("]");
+      continue;
+    }
+    if ((ch === "}" || ch === "]") && stack.length > 0) {
+      stack.pop();
+    }
+  }
+
+  if (inString) {
+    if (escaped) text += "\\";
+    text += '"';
+  }
+  while (stack.length > 0) {
+    text += stack.pop();
+  }
+  return text;
+}
+
+function parseJsonObjectWithRecovery(content: string): any {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const pushCandidate = (value: string | null | undefined) => {
+    const normalized = (value ?? "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  let strictPayload = "";
+  try {
+    strictPayload = extractJsonPayload(content);
+    pushCandidate(strictPayload);
+  } catch {
+    // fall through with recovery candidates
+  }
+
+  const normalizedContent = normalizeJsonLikeText(content ?? "");
+  pushCandidate(normalizedContent);
+
+  const firstBrace = normalizedContent.indexOf("{");
+  if (firstBrace >= 0) {
+    pushCandidate(normalizedContent.slice(firstBrace));
+  }
+  if (strictPayload) {
+    pushCandidate(normalizeJsonLikeText(strictPayload));
+  }
+
+  const expandedCandidates = [...candidates];
+  for (const item of candidates) {
+    expandedCandidates.push(replaceSingleQuotedJsonLiterals(item));
+    expandedCandidates.push(removeTrailingCommas(item));
+    expandedCandidates.push(balanceJsonClosings(item));
+    expandedCandidates.push(
+      balanceJsonClosings(removeTrailingCommas(replaceSingleQuotedJsonLiterals(item))),
+    );
+  }
+
+  let lastError: unknown;
+  for (const candidate of expandedCandidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new SyntaxError("AI 返回的不是有效的 JSON 格式");
+}
+
 function splitNarrationText(text: string, maxLen = 60): string[] {
   const normalized = text.trim();
   if (!normalized) return [""];
@@ -271,6 +437,37 @@ function splitNarrationText(text: string, maxLen = 60): string[] {
 
   if (remaining) parts.push(remaining);
   return parts.filter(Boolean);
+}
+
+function buildFallbackStoryResponse(requiredPacing?: PaceLevel): LLMResponse {
+  const pacing = normalizePaceLevel(requiredPacing ?? DEFAULT_PACE);
+  const segments: StorySegment[] = [
+    {
+      type: "narration",
+      text: "你先稳住呼吸，快速复盘现场，判断眼前局势的真实威胁。",
+    },
+    {
+      type: "narration",
+      text: "细节逐渐浮出水面，但关键线索仍然隐藏在风险更高的行动里。",
+    },
+    {
+      type: "choice",
+      text: "接下来你要怎么做？",
+      choices: [
+        "你先观察周围并整理可用线索",
+        "你主动接触关键人物并试探其反应",
+        "你选择高风险行动直接突破当前僵局",
+      ],
+      judgmentValues: [null, null, 5],
+    },
+  ];
+  return {
+    segments,
+    newCharacters: [],
+    pacing,
+    generatedChars: countSegmentsChars(segments),
+    minCharsTarget: PACE_MIN_CHARS[pacing],
+  };
 }
 
 // ─── Config Management ──────────────────────────────────────────────
@@ -382,7 +579,7 @@ export async function generateStory(
           content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ""}${params.protagonistAppearance ? `，主角外貌：${params.protagonistAppearance}` : ""}。\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请生成剧情片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
         },
       ],
-      temperature: 1.0,
+      temperature: 0.7,
       max_tokens: 4000,
     }),
   });
@@ -443,7 +640,7 @@ export async function continueStory(
             content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${clampHistoryForPrompt(params.history)}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
           },
         ],
-        temperature: 1.0,
+        temperature: 0.7,
         max_tokens: 4000,
       }),
       signal: controller.signal,
@@ -518,7 +715,7 @@ export async function summarizeStory(
 
   // Try to parse as JSON first (new format)
   try {
-    const parsed = JSON.parse(extractJsonPayload(content));
+    const parsed = parseJsonObjectWithRecovery(content);
     return {
       title: parsed.title || "",
       summary: parsed.summary || content,
@@ -582,7 +779,7 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
   const content: string = data.choices[0]?.message?.content ?? "";
 
   try {
-    const parsed = JSON.parse(extractJsonPayload(content)) as RandomStoryConfig;
+    const parsed = parseJsonObjectWithRecovery(content) as RandomStoryConfig;
     if (!parsed.title || !parsed.premise || !parsed.protagonistName) {
       throw new Error("返回字段不完整");
     }
@@ -647,7 +844,7 @@ function parseLLMResponse(
   requiredPacing?: PaceLevel,
 ): LLMResponse {
   try {
-    const parsed = JSON.parse(extractJsonPayload(content));
+    const parsed = parseJsonObjectWithRecovery(content);
 
     // 验证返回的数据结构
     if (!Array.isArray(parsed.segments)) {
@@ -688,10 +885,15 @@ function parseLLMResponse(
           }
           // Clamp numeric values to 1-8, keep null as-is
           segment.judgmentValues = segment.judgmentValues.map(
-            (v: number | null) =>
-              v === null || v === undefined
+            (v: number | null, idx: number) => {
+              const choiceText = segment.choices?.[idx] ?? "";
+              if (!shouldRequireDiceCheck(choiceText)) {
+                return null;
+              }
+              return v === null || v === undefined
                 ? null
-                : Math.max(1, Math.min(8, Math.round(v))),
+                : Math.max(1, Math.min(8, Math.round(v)));
+            },
           );
         }
         // judgmentValues may be absent in 无随机 mode — that's fine
@@ -739,10 +941,12 @@ function parseLLMResponse(
       minCharsTarget,
     };
   } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new Error("AI 返回的不是有效的 JSON 格式");
-    }
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      "[LLM] parseLLMResponse failed, fallback response enabled:",
+      message,
+    );
+    return buildFallbackStoryResponse(requiredPacing);
   }
 }
 
@@ -755,11 +959,16 @@ export async function evaluateCustomAction(
   difficulty: DifficultyLevel,
   protagonistName?: string,
   protagonistDescription?: string,
-): Promise<number> {
+): Promise<number | null> {
   const config = await getLLMConfig();
 
   if (!config.apiKey) {
     throw new Error("请先在设置中配置 API Key");
+  }
+
+  const contextSnippet = history.slice(-220);
+  if (!shouldRequireDiceCheck(action, contextSnippet)) {
+    return null;
   }
 
   const prompts = await getActivePrompts();
@@ -779,7 +988,7 @@ export async function evaluateCustomAction(
         { role: "system", content: prompts.EVALUATE_ACTION_SYSTEM_PROMPT },
         {
           role: "user",
-          content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n请结合主角的性格与能力评估该行动的判定值（1-8），只输出数字。`,
+            content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n请先判断该行动是否属于“高不确定尝试行动”：若不是，请输出 null；若是，再输出 1-8 的判定值。只输出 null 或数字，不要输出解释。`,
         },
       ],
       temperature: 0.3,
@@ -793,7 +1002,16 @@ export async function evaluateCustomAction(
 
   const data = await response.json();
   const content: string = data.choices[0]?.message?.content?.trim() ?? "4";
-  const value = parseInt(content, 10);
+  const normalized = content.toLowerCase();
+  if (
+    normalized === "null" ||
+    normalized.includes("不需要") ||
+    normalized.includes("无需")
+  ) {
+    return null;
+  }
+  const match = content.match(/[1-8]/);
+  const value = match ? parseInt(match[0], 10) : Number.NaN;
   return Number.isNaN(value) ? 4 : Math.max(1, Math.min(8, value));
 }
 

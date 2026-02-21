@@ -46,6 +46,13 @@ const DIFFICULTIES: DifficultyLevel[] = [
   "无随机",
 ];
 const PACES: PaceLevel[] = ["慵懒", "轻松", "紧张", "紧迫"];
+const DIFFICULTY_DICE_HINTS: Record<DifficultyLevel, string> = {
+  简单: "简单：容错更高，失败代价相对较低。",
+  普通: "普通：成败收益和代价较为平衡。",
+  困难: "困难：失败惩罚更重，推进更考验选择。",
+  噩梦: "噩梦：风险最高，错误决策会被明显放大。",
+  无随机: "无随机：不掷骰，按剧情与选择直接结算。",
+};
 
 function ensureChoiceSegment(segments: StorySegment[]): StorySegment[] {
   const hasChoice = segments.some(
@@ -360,6 +367,23 @@ export default function CreateStoryScreen() {
             ))}
           </View>
 
+          <View
+            style={[
+              styles.difficultyHintBox,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.surface,
+              },
+            ]}
+          >
+            <Text style={[styles.difficultyHintText, { color: colors.foreground }]}>
+              {DIFFICULTY_DICE_HINTS[difficulty]}
+            </Text>
+            <Text style={[styles.difficultyRuleText, { color: colors.muted }]}>
+              掷骰规则：仅在高不确定尝试时触发；1-8 点，小于判定值=失败，等于=平局，大于=成功。
+            </Text>
+          </View>
+
           <Text style={[styles.label, { color: colors.foreground }]}>
             初始节奏
           </Text>
@@ -488,6 +512,15 @@ const styles = StyleSheet.create({
   section: { gap: 6 },
   label: { fontSize: 14, fontWeight: "700" },
   helperText: { fontSize: 12, lineHeight: 18 },
+  difficultyHintBox: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  difficultyHintText: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
+  difficultyRuleText: { fontSize: 12, lineHeight: 17 },
   input: {
     borderWidth: 1,
     borderRadius: 10,

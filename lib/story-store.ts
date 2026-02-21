@@ -68,6 +68,8 @@ export interface StorySummaryRecord {
   summary: string;
   /** Names of characters involved in this summary segment */
   involvedCharacters: string[];
+  /** Full-history char length when this summary was generated */
+  sourceChars?: number;
   createdAt: number;
 }
 

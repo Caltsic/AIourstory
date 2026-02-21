@@ -42,13 +42,27 @@ import {
   getLLMConfig,
   evaluateCustomAction,
   generateCharacterPortraitPrompt,
+  HISTORY_CONTEXT_CHARS_LIMIT,
   PACE_MIN_CHARS,
 } from "@/lib/llm-client";
 import { buildDiceOutcomeContext } from "@/lib/llm-prompts";
 import { generateImage, getImageConfig } from "@/lib/image-client";
 import { rollDice, evaluateDiceResult } from "@/lib/dice";
 
-const HISTORY_SUMMARY_TRIGGER_CHARS = 8000;
+const HISTORY_SUMMARY_TRIGGER_CHARS = HISTORY_CONTEXT_CHARS_LIMIT;
+const SUMMARY_REFRESH_CHOICE_INTERVAL = 3;
+const SUMMARY_REFRESH_DELTA_CHARS = Math.max(
+  1200,
+  Math.floor(HISTORY_SUMMARY_TRIGGER_CHARS * 0.4),
+);
+const AUTO_IMAGE_HISTORY_LIMIT = 30;
+const AUTO_READ_SPEEDS = [1, 2, 3, 4] as const;
+const AUTO_READ_DELAY_MS: Record<(typeof AUTO_READ_SPEEDS)[number], number> = {
+  1: 1800,
+  2: 1200,
+  3: 800,
+  4: 550,
+};
 
 interface LastSentContextMetrics {
   fullChars: number;
@@ -168,6 +182,22 @@ export default function GameScreen() {
       at: null,
     });
   const [historyStuckCount, setHistoryStuckCount] = useState(0);
+  const [autoReadEnabled, setAutoReadEnabled] = useState(false);
+  const [autoReadSpeedIndex, setAutoReadSpeedIndex] = useState(0);
+  const isMountedRef = useRef(true);
+  const autoReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backgroundTaskInFlightRef = useRef(false);
+  const autoBackgroundQueueRef = useRef<
+    { storyId: string; summary: string; trigger: string }[]
+  >([]);
+  const autoBackgroundRunningRef = useRef(false);
+  const autoBackgroundSeenRef = useRef<Set<string>>(new Set());
+  const autoPortraitQueueRef = useRef<{ storyId: string; cardId: string }[]>(
+    [],
+  );
+  const autoPortraitQueuedRef = useRef<Set<string>>(new Set());
+  const autoPortraitInFlightRef = useRef<Set<string>>(new Set());
+  const autoPortraitRunningRef = useRef(false);
 
   // Current segment being displayed
   const [viewIndex, setViewIndex] = useState(0);
@@ -189,6 +219,7 @@ export default function GameScreen() {
   const currentPacing = story?.currentPacing ?? "轻松";
   const currentMinCharsTarget = PACE_MIN_CHARS[currentPacing];
   const currentGeneratedChars = story?.lastGeneratedChars ?? 0;
+  const autoReadSpeed = AUTO_READ_SPEEDS[autoReadSpeedIndex];
   const displayCards = story
     ? [
         {
@@ -234,11 +265,76 @@ export default function GameScreen() {
     }
   }
 
+  function clearAutoReadTimer() {
+    if (autoReadTimerRef.current) {
+      clearTimeout(autoReadTimerRef.current);
+      autoReadTimerRef.current = null;
+    }
+  }
+
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
+      clearAutoReadTimer();
       clearDiceTimers();
     };
   }, []);
+
+  useEffect(() => {
+    clearAutoReadTimer();
+    if (!autoReadEnabled) return;
+    if (
+      !story ||
+      !currentSegment ||
+      loading ||
+      generating ||
+      showDiceModal ||
+      showMenu ||
+      showHistory ||
+      showPromptHistory ||
+      showSummaryHistory ||
+      showCharacterCards ||
+      showCustomInputModal ||
+      showChoiceConfirmModal ||
+      !done ||
+      hasUsableChoices ||
+      isChoice
+    ) {
+      return;
+    }
+
+    const delay = AUTO_READ_DELAY_MS[autoReadSpeed];
+    autoReadTimerRef.current = setTimeout(() => {
+      if (!story || viewIndex >= story.segments.length - 1) return;
+      const next = viewIndex + 1;
+      setViewIndex(next);
+      story.currentIndex = next;
+      void updateStory(story);
+    }, delay);
+
+    return () => {
+      clearAutoReadTimer();
+    };
+  }, [
+    autoReadEnabled,
+    autoReadSpeed,
+    story,
+    currentSegment,
+    loading,
+    generating,
+    showDiceModal,
+    showMenu,
+    showHistory,
+    showPromptHistory,
+    showSummaryHistory,
+    showCharacterCards,
+    showCustomInputModal,
+    showChoiceConfirmModal,
+    done,
+    hasUsableChoices,
+    isChoice,
+    viewIndex,
+  ]);
 
   useEffect(() => {
     if (!showPromptHistory) return;
@@ -333,6 +429,7 @@ export default function GameScreen() {
         characterCards: s.characterCards,
       });
       if (result.segments && result.segments.length > 0) {
+        const summariesForAutoBackground: string[] = [];
         const initialSegments = ensureChoiceSegment(
           result.segments as StorySegment[],
         );
@@ -342,15 +439,17 @@ export default function GameScreen() {
         s.latestGeneratedContext =
           buildImageContextFromSegments(initialSegments);
         s.currentIndex = 0;
-        processNewCharacters(s, result.newCharacters);
+        const newCharacterCardIds = processNewCharacters(s, result.newCharacters);
         try {
+          const fullHistoryText = buildFullHistoryContext(s.segments);
           const summaryResult = await summarizeStory({
-            history: buildFullHistoryContext(s.segments),
+            history: fullHistoryText,
             recentTitles: getRecentSummaryTitles(s),
           });
           if (summaryResult.summary) {
-            s.storySummary = summaryResult.summary;
-            addSummaryRecord(s, summaryResult);
+            s.storySummary = summaryResult.summary.trim();
+            addSummaryRecord(s, summaryResult, fullHistoryText.length);
+            summariesForAutoBackground.push(s.storySummary);
           }
         } catch (summaryErr) {
           console.warn("Initial summary generation failed:", summaryErr);
@@ -358,6 +457,10 @@ export default function GameScreen() {
         await updateStory(s);
         setStory({ ...s });
         setViewIndex(0);
+        for (const summaryText of summariesForAutoBackground) {
+          enqueueAutoBackgroundGeneration(s.id, summaryText, "initial-summary");
+        }
+        enqueueAutoPortraitGeneration(s.id, newCharacterCardIds);
       }
     } catch (err) {
       console.error("Generate failed:", err);
@@ -379,6 +482,7 @@ export default function GameScreen() {
   function addSummaryRecord(
     targetStory: Story,
     result: { title: string; summary: string; involvedCharacters: string[] },
+    sourceChars?: number,
   ) {
     const trimmed = result.summary.trim();
     if (!trimmed) return;
@@ -402,6 +506,7 @@ export default function GameScreen() {
       title,
       summary: trimmed,
       involvedCharacters: result.involvedCharacters || [],
+      sourceChars,
       createdAt: Date.now(),
     };
     targetStory.summaryHistory = [record, ...targetStory.summaryHistory].slice(
@@ -428,7 +533,8 @@ export default function GameScreen() {
       background: string;
       appearance?: string;
     }[],
-  ) {
+  ): string[] {
+    const createdCardIds: string[] = [];
     const inferInitialAffinity = (text: string): number => {
       const normalized = text || "";
       if (
@@ -444,7 +550,7 @@ export default function GameScreen() {
       return 0;
     };
 
-    if (!newCharacters || newCharacters.length === 0) return;
+    if (!newCharacters || newCharacters.length === 0) return createdCardIds;
     for (const nc of newCharacters) {
       const hiddenName = nc.hiddenName?.trim() || "陌生人";
       const reveal =
@@ -473,8 +579,9 @@ export default function GameScreen() {
           legacyAlias.affinity = initialAffinity;
         }
       } else {
+        const cardId = generateLocalId();
         s.characterCards.push({
-          id: generateLocalId(),
+          id: cardId,
           name: nc.name,
           hiddenName,
           isNameRevealed: reveal,
@@ -485,8 +592,10 @@ export default function GameScreen() {
           affinity: initialAffinity,
           firstAppearance: s.segments.length,
         });
+        createdCardIds.push(cardId);
       }
     }
+    return createdCardIds;
   }
 
   function buildImageContextFromSegments(segments: StorySegment[]): string {
@@ -596,13 +705,29 @@ export default function GameScreen() {
 
   async function refreshSummaryWhenContextTooLong(
     targetStory: Story,
-  ): Promise<string> {
+  ): Promise<{ historyContext: string; generatedSummary?: string }> {
     const fullHistory = buildFullHistoryContext(targetStory.segments);
     if (fullHistory.length < HISTORY_SUMMARY_TRIGGER_CHARS) {
-      return buildHistoryContext(
-        targetStory.segments,
-        targetStory.storySummary,
-      );
+      return {
+        historyContext: buildHistoryContext(
+          targetStory.segments,
+          targetStory.storySummary,
+        ),
+      };
+    }
+
+    const latestSourceChars = targetStory.summaryHistory?.[0]?.sourceChars ?? 0;
+    if (
+      targetStory.storySummary?.trim() &&
+      latestSourceChars > 0 &&
+      fullHistory.length - latestSourceChars < SUMMARY_REFRESH_DELTA_CHARS
+    ) {
+      return {
+        historyContext: buildHistoryContext(
+          targetStory.segments,
+          targetStory.storySummary,
+        ),
+      };
     }
 
     const summaryResult = await summarizeStory({
@@ -610,16 +735,24 @@ export default function GameScreen() {
       recentTitles: getRecentSummaryTitles(targetStory),
     });
     if (!summaryResult.summary?.trim()) {
-      return buildHistoryContext(
-        targetStory.segments,
-        targetStory.storySummary,
-      );
+      return {
+        historyContext: buildHistoryContext(
+          targetStory.segments,
+          targetStory.storySummary,
+        ),
+      };
     }
 
     targetStory.storySummary = summaryResult.summary.trim();
-    addSummaryRecord(targetStory, summaryResult);
+    addSummaryRecord(targetStory, summaryResult, fullHistory.length);
     await updateStory(targetStory);
-    return buildHistoryContext(targetStory.segments, targetStory.storySummary);
+    return {
+      historyContext: buildHistoryContext(
+        targetStory.segments,
+        targetStory.storySummary,
+      ),
+      generatedSummary: targetStory.storySummary,
+    };
   }
 
   function confirmChoice(choiceText: string, choiceIndex?: number) {
@@ -658,8 +791,235 @@ export default function GameScreen() {
     return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  function sleep(ms: number) {
+    return new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  function buildAutoSummaryKey(storyIdValue: string, summary: string): string {
+    return `${storyIdValue}:${summary.replace(/\s+/g, "").slice(0, 200)}`;
+  }
+
+  function buildAutoPortraitKey(storyIdValue: string, cardId: string): string {
+    return `${storyIdValue}:${cardId}`;
+  }
+
+  function enqueueAutoBackgroundGeneration(
+    targetStoryId: string,
+    summary: string,
+    trigger: string,
+  ) {
+    const trimmed = summary.trim();
+    if (!targetStoryId || !trimmed) return;
+    const key = buildAutoSummaryKey(targetStoryId, trimmed);
+    if (autoBackgroundSeenRef.current.has(key)) return;
+
+    autoBackgroundSeenRef.current.add(key);
+    if (autoBackgroundSeenRef.current.size > 240) {
+      autoBackgroundSeenRef.current.clear();
+      autoBackgroundSeenRef.current.add(key);
+    }
+    autoBackgroundQueueRef.current.push({
+      storyId: targetStoryId,
+      summary: trimmed,
+      trigger,
+    });
+    void drainAutoBackgroundQueue();
+  }
+
+  async function drainAutoBackgroundQueue() {
+    if (autoBackgroundRunningRef.current) return;
+    autoBackgroundRunningRef.current = true;
+    try {
+      while (autoBackgroundQueueRef.current.length > 0) {
+        const task = autoBackgroundQueueRef.current.shift();
+        if (!task) continue;
+
+        // Wait for manual background generation to finish.
+        while (backgroundTaskInFlightRef.current) {
+          await sleep(250);
+        }
+        backgroundTaskInFlightRef.current = true;
+
+        const promptRecordId =
+          Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        const createdAt = Date.now();
+        let imagePrompt = "";
+        try {
+          const imageConfig = await getImageConfig();
+          if (!imageConfig.imageApiUrl || !imageConfig.imageModel) {
+            continue;
+          }
+
+          imagePrompt = await generateImagePrompt(task.summary);
+          const uri = await generateImage(imagePrompt);
+          const latest = await getStory(task.storyId);
+          if (!latest) continue;
+
+          const record: ImagePromptRecord = {
+            id: promptRecordId,
+            prompt: imagePrompt,
+            summary: `[auto:${task.trigger}] ${task.summary}`,
+            status: "success",
+            createdAt,
+            imageUri: uri,
+          };
+          latest.imagePromptHistory = [record, ...(latest.imagePromptHistory ?? [])]
+            .slice(0, AUTO_IMAGE_HISTORY_LIMIT);
+          latest.backgroundImageUri = uri;
+          latest.imageGenerationStatus = "success";
+          latest.lastImageGenerationAt = Date.now();
+          await updateStory(latest);
+
+          if (isMountedRef.current) {
+            setStory((prev) => {
+              if (!prev || prev.id !== latest.id) return prev;
+              return {
+                ...prev,
+                backgroundImageUri: latest.backgroundImageUri,
+                imageGenerationStatus: latest.imageGenerationStatus,
+                lastImageGenerationAt: latest.lastImageGenerationAt,
+                imagePromptHistory: latest.imagePromptHistory,
+              };
+            });
+            if (storyId === latest.id) {
+              setBackgroundImageUri(latest.backgroundImageUri);
+            }
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "未知错误";
+          const latest = await getStory(task.storyId);
+          if (latest) {
+            const record: ImagePromptRecord = {
+              id: promptRecordId,
+              prompt: imagePrompt || "[自动背景图提示词生成失败]",
+              summary: `[auto:${task.trigger}] ${task.summary}`,
+              status: "failed",
+              createdAt,
+              error: message,
+            };
+            latest.imagePromptHistory = [
+              record,
+              ...(latest.imagePromptHistory ?? []),
+            ].slice(0, AUTO_IMAGE_HISTORY_LIMIT);
+            latest.imageGenerationStatus = "failed";
+            latest.lastImageGenerationAt = Date.now();
+            await updateStory(latest);
+
+            if (isMountedRef.current) {
+              setStory((prev) => {
+                if (!prev || prev.id !== latest.id) return prev;
+                return {
+                  ...prev,
+                  imageGenerationStatus: latest.imageGenerationStatus,
+                  lastImageGenerationAt: latest.lastImageGenerationAt,
+                  imagePromptHistory: latest.imagePromptHistory,
+                };
+              });
+            }
+          }
+          console.warn("[auto-bg] generation failed:", message);
+        } finally {
+          backgroundTaskInFlightRef.current = false;
+        }
+      }
+    } finally {
+      autoBackgroundRunningRef.current = false;
+    }
+  }
+
+  function enqueueAutoPortraitGeneration(targetStoryId: string, cardIds: string[]) {
+    if (!targetStoryId || cardIds.length === 0) return;
+    for (const cardId of cardIds) {
+      const key = buildAutoPortraitKey(targetStoryId, cardId);
+      if (
+        autoPortraitQueuedRef.current.has(key) ||
+        autoPortraitInFlightRef.current.has(key)
+      ) {
+        continue;
+      }
+      autoPortraitQueuedRef.current.add(key);
+      autoPortraitQueueRef.current.push({ storyId: targetStoryId, cardId });
+    }
+    void drainAutoPortraitQueue();
+  }
+
+  function removeAutoPortraitTask(taskKey: string) {
+    if (!autoPortraitQueuedRef.current.has(taskKey)) return;
+    autoPortraitQueuedRef.current.delete(taskKey);
+    autoPortraitQueueRef.current = autoPortraitQueueRef.current.filter(
+      (item) => buildAutoPortraitKey(item.storyId, item.cardId) !== taskKey,
+    );
+  }
+
+  async function drainAutoPortraitQueue() {
+    if (autoPortraitRunningRef.current) return;
+    autoPortraitRunningRef.current = true;
+    try {
+      while (autoPortraitQueueRef.current.length > 0) {
+        const task = autoPortraitQueueRef.current.shift();
+        if (!task) continue;
+
+        const taskKey = buildAutoPortraitKey(task.storyId, task.cardId);
+        autoPortraitQueuedRef.current.delete(taskKey);
+        if (autoPortraitInFlightRef.current.has(taskKey)) continue;
+        autoPortraitInFlightRef.current.add(taskKey);
+
+        try {
+          const imageConfig = await getImageConfig();
+          if (!imageConfig.imageApiUrl || !imageConfig.imageModel) {
+            continue;
+          }
+
+          const latest = await getStory(task.storyId);
+          const card = latest?.characterCards.find((c) => c.id === task.cardId);
+          if (!latest || !card || card.portraitUri) continue;
+
+          const prompt = await generateCharacterPortraitPrompt({
+            ...card,
+            gender: card.gender || "未知",
+          });
+          const uri = await generateImage(prompt);
+
+          const targetStory = await getStory(task.storyId);
+          const targetCard = targetStory?.characterCards.find(
+            (c) => c.id === task.cardId,
+          );
+          if (!targetStory || !targetCard || targetCard.portraitUri) continue;
+
+          targetCard.portraitUri = uri;
+          await updateStory(targetStory);
+
+          if (isMountedRef.current) {
+            setStory((prev) => {
+              if (!prev || prev.id !== targetStory.id) return prev;
+              return {
+                ...prev,
+                characterCards: prev.characterCards.map((item) =>
+                  item.id === task.cardId ? { ...item, portraitUri: uri } : item,
+                ),
+              };
+            });
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "未知错误";
+          console.warn("[auto-portrait] generation failed:", message);
+        } finally {
+          autoPortraitInFlightRef.current.delete(taskKey);
+        }
+      }
+    } finally {
+      autoPortraitRunningRef.current = false;
+    }
+  }
+
   async function handleGenerateImage() {
     if (!story || imageGenerating) return;
+    if (backgroundTaskInFlightRef.current) {
+      Alert.alert("请稍候", "已有背景生图任务在进行中");
+      return;
+    }
     if (generating) {
       Alert.alert("请稍候", "剧情生成进行中，请等待完成后再生图");
       return;
@@ -674,6 +1034,7 @@ export default function GameScreen() {
     const promptRecordId =
       Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+    backgroundTaskInFlightRef.current = true;
     setImageGenerating(true);
     try {
       story.imageGenerationStatus = "generating";
@@ -696,7 +1057,7 @@ export default function GameScreen() {
       story.imagePromptHistory = [
         promptRecord,
         ...(story.imagePromptHistory ?? []),
-      ].slice(0, 30);
+      ].slice(0, AUTO_IMAGE_HISTORY_LIMIT);
       await updateStory(story);
       setStory({ ...story });
 
@@ -734,6 +1095,8 @@ export default function GameScreen() {
       Alert.alert("生图失败", message);
     } finally {
       setImageGenerating(false);
+      backgroundTaskInFlightRef.current = false;
+      void drainAutoBackgroundQueue();
     }
   }
 
@@ -907,8 +1270,16 @@ export default function GameScreen() {
     card: CharacterCard & { isProtagonist?: boolean },
   ) {
     if (!story || portraitGenerating) return;
+    const portraitTaskKey = buildAutoPortraitKey(story.id, card.id);
+    if (autoPortraitInFlightRef.current.has(portraitTaskKey)) {
+      Alert.alert("请稍候", `${getCharacterDisplayName(card)} 正在生成形象图`);
+      return;
+    }
+    removeAutoPortraitTask(portraitTaskKey);
+    autoPortraitInFlightRef.current.add(portraitTaskKey);
     const config = await getImageConfig();
     if (!config.imageApiUrl || !config.imageModel) {
+      autoPortraitInFlightRef.current.delete(portraitTaskKey);
       Alert.alert("未配置生图", "请先在设置中填写图片 API URL 和模型名称");
       return;
     }
@@ -938,7 +1309,9 @@ export default function GameScreen() {
     } catch (err) {
       Alert.alert("生成失败", err instanceof Error ? err.message : "未知错误");
     } finally {
+      autoPortraitInFlightRef.current.delete(portraitTaskKey);
       setPortraitGenerating(null);
+      void drainAutoPortraitQueue();
     }
   }
 
@@ -985,7 +1358,7 @@ export default function GameScreen() {
       const raw = typeof val === "number" ? val : null;
       judgmentValue = getAffinityAdjustedJudgment(raw, choiceText);
     } else {
-      // Custom action — always requires dice check, ask AI to evaluate
+      // Custom action — ask AI whether this action needs a dice check first
       try {
         setGenerating(true);
         judgmentValue = await evaluateCustomAction(
@@ -1050,6 +1423,7 @@ export default function GameScreen() {
   async function proceedWithChoice(choiceText: string, dice?: DiceResult) {
     if (!story) return;
     const historyBeforeChoice = story.historyContext;
+    const summariesForAutoBackground: string[] = [];
 
     // Add a narration segment for the choice made
     const diceInfo = dice ? ` [🎲 ${dice.roll}/${dice.judgmentValue}]` : "";
@@ -1068,7 +1442,11 @@ export default function GameScreen() {
     );
     if (fullHistory.length >= HISTORY_SUMMARY_TRIGGER_CHARS) {
       try {
-        latestHistoryContext = await refreshSummaryWhenContextTooLong(story);
+        const refreshResult = await refreshSummaryWhenContextTooLong(story);
+        latestHistoryContext = refreshResult.historyContext;
+        if (refreshResult.generatedSummary) {
+          summariesForAutoBackground.push(refreshResult.generatedSummary);
+        }
       } catch (summaryErr) {
         console.warn("Summary generation failed:", summaryErr);
       }
@@ -1123,22 +1501,36 @@ export default function GameScreen() {
       story.currentIndex = newIndex;
 
       // Process new characters
-      processNewCharacters(story, result.newCharacters);
+      const newCharacterCardIds = processNewCharacters(
+        story,
+        result.newCharacters,
+      );
 
       // Increment choice counter
       story.choiceCount = (story.choiceCount ?? 0) + 1;
 
-      try {
-        const summaryResult = await summarizeStory({
-          history: buildFullHistoryContext(story.segments),
-          recentTitles: getRecentSummaryTitles(story),
-        });
-        if (summaryResult.summary) {
-          story.storySummary = summaryResult.summary;
-          addSummaryRecord(story, summaryResult);
+      const historyAfterContinue = buildFullHistoryContext(story.segments);
+      const latestSummarySourceChars =
+        story.summaryHistory?.[0]?.sourceChars ?? 0;
+      const shouldRefreshSummary =
+        story.choiceCount % SUMMARY_REFRESH_CHOICE_INTERVAL === 0 ||
+        latestSummarySourceChars <= 0 ||
+        historyAfterContinue.length - latestSummarySourceChars >=
+          SUMMARY_REFRESH_DELTA_CHARS;
+      if (shouldRefreshSummary) {
+        try {
+          const summaryResult = await summarizeStory({
+            history: historyAfterContinue,
+            recentTitles: getRecentSummaryTitles(story),
+          });
+          if (summaryResult.summary) {
+            story.storySummary = summaryResult.summary.trim();
+            addSummaryRecord(story, summaryResult, historyAfterContinue.length);
+            summariesForAutoBackground.push(story.storySummary);
+          }
+        } catch (summaryErr) {
+          console.warn("Summary generation failed:", summaryErr);
         }
-      } catch (summaryErr) {
-        console.warn("Summary generation failed:", summaryErr);
       }
 
       await updateStory(story);
@@ -1149,6 +1541,10 @@ export default function GameScreen() {
       }
       setStory({ ...story });
       setViewIndex(newIndex);
+      for (const summaryText of summariesForAutoBackground) {
+        enqueueAutoBackgroundGeneration(story.id, summaryText, "continue-summary");
+      }
+      enqueueAutoPortraitGeneration(story.id, newCharacterCardIds);
     } catch (err) {
       console.error("Continue failed:", err);
       Alert.alert("生成失败", err instanceof Error ? err.message : "未知错误");
@@ -1175,6 +1571,16 @@ export default function GameScreen() {
       updateStory(story);
     }
     router.back();
+  }
+
+  function toggleAutoRead() {
+    setAutoReadEnabled((prev) => !prev);
+  }
+
+  function cycleAutoReadSpeed() {
+    setAutoReadSpeedIndex(
+      (prev) => (prev + 1) % AUTO_READ_SPEEDS.length,
+    );
   }
 
   // ─── Render ──────────────────────────────────────────────────────
@@ -1214,17 +1620,84 @@ export default function GameScreen() {
         >
           {/* Top bar */}
           <View style={styles.topBar}>
-            <TouchableOpacity
-              onPress={handleBack}
-              style={styles.topBarButton}
-              activeOpacity={0.7}
-            >
-              <IconSymbol
-                name="arrow.left"
-                size={22}
-                color={backgroundImageUri ? "#fff" : colors.foreground}
-              />
-            </TouchableOpacity>
+            <View style={styles.topBarLeft}>
+              <TouchableOpacity
+                onPress={toggleAutoRead}
+                style={[
+                  styles.autoReadToggle,
+                  autoReadEnabled && styles.autoReadToggleActive,
+                  {
+                    borderColor: backgroundImageUri
+                      ? "rgba(255,255,255,0.5)"
+                      : colors.border,
+                    backgroundColor: autoReadEnabled
+                      ? colors.primary
+                      : backgroundImageUri
+                        ? "rgba(255,255,255,0.12)"
+                        : colors.surface,
+                  },
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.autoReadToggleText,
+                    {
+                      color: autoReadEnabled
+                        ? "#fff"
+                        : backgroundImageUri
+                          ? "#fff"
+                          : colors.foreground,
+                    },
+                  ]}
+                >
+                  {">>"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={cycleAutoReadSpeed}
+                style={[
+                  styles.autoReadSpeedButton,
+                  {
+                    borderColor: backgroundImageUri
+                      ? "rgba(255,255,255,0.45)"
+                      : colors.border,
+                    backgroundColor: backgroundImageUri
+                      ? "rgba(255,255,255,0.1)"
+                      : colors.surface,
+                  },
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.autoReadSpeedText,
+                    {
+                      color: autoReadEnabled
+                        ? backgroundImageUri
+                          ? "#fff"
+                          : colors.primary
+                        : backgroundImageUri
+                          ? "rgba(255,255,255,0.9)"
+                          : colors.muted,
+                    },
+                  ]}
+                >
+                  {autoReadSpeed}x
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleBack}
+                style={styles.topBarButton}
+                activeOpacity={0.7}
+              >
+                <IconSymbol
+                  name="arrow.left"
+                  size={22}
+                  color={backgroundImageUri ? "#fff" : colors.foreground}
+                />
+              </TouchableOpacity>
+            </View>
             <Text
               style={[
                 styles.storyTitle,
@@ -2511,8 +2984,44 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
+  topBarLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   topBarButton: {
     padding: 8,
+  },
+  autoReadToggle: {
+    height: 30,
+    minWidth: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  autoReadToggleActive: {
+    borderColor: "transparent",
+  },
+  autoReadToggleText: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  autoReadSpeedButton: {
+    height: 30,
+    minWidth: 40,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  autoReadSpeedText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
   topBarActions: {
     flexDirection: "row",
