@@ -1,5 +1,4 @@
-﻿import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from "axios";
-import { getServerApiBaseUrl } from "@/lib/storage";
+import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from "axios";
 
 interface AuthHooks {
   getAccessToken: () => Promise<string | null>;
@@ -11,7 +10,16 @@ let authHooks: AuthHooks = {
   refreshAuth: async () => false,
 };
 
-let baseUrl = "http://127.0.0.1:3000/v1";
+const DEFAULT_API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://8.137.71.118/v1";
+
+function normalizeApiBaseUrl(url: string) {
+  const value = url.trim() || DEFAULT_API_BASE_URL;
+  const noTrailingSlash = value.replace(/\/+$/, "");
+  return noTrailingSlash.endsWith("/v1") ? noTrailingSlash : `${noTrailingSlash}/v1`;
+}
+
+let baseUrl = normalizeApiBaseUrl(DEFAULT_API_BASE_URL);
 
 type RetryConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
@@ -26,12 +34,11 @@ export const rawApiClient: AxiosInstance = axios.create({
 });
 
 export async function initializeApiClient() {
-  const url = await getServerApiBaseUrl();
-  setApiBaseUrl(url);
+  setApiBaseUrl(DEFAULT_API_BASE_URL);
 }
 
 export function setApiBaseUrl(url: string) {
-  baseUrl = url.replace(/\/$/, "");
+  baseUrl = normalizeApiBaseUrl(url);
   apiClient.defaults.baseURL = baseUrl;
   rawApiClient.defaults.baseURL = baseUrl;
 }

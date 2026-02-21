@@ -1,96 +1,76 @@
-import { useState, useEffect } from "react";
-import { Text, View, TouchableOpacity, StyleSheet, Alert, TextInput, ScrollView, Modal } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  Alert,
+  Modal,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { useRouter } from "expo-router";
+
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getLLMConfig, saveLLMConfig, testAPIKey } from "@/lib/llm-client";
-import { getImageConfig, saveImageConfig } from "@/lib/image-client";
-import { setTestDiceValue } from "@/lib/dice";
 import { useAuth } from "@/lib/auth-provider";
-import { getServerApiBaseUrl, saveServerApiBaseUrl } from "@/lib/storage";
-import { setApiBaseUrl } from "@/lib/api-client";
+import { clearAppLogs, formatLogLines, getAppLogs, logInfo } from "@/lib/app-logger";
+import { setTestDiceValue } from "@/lib/dice";
+import { getImageConfig, saveImageConfig } from "@/lib/image-client";
+import { getLLMConfig, saveLLMConfig, testAPIKey } from "@/lib/llm-client";
 
-// 预设的 API 配置
 const API_PRESETS = [
-  {
-    name: "OpenAI",
-    apiUrl: "https://api.openai.com/v1/chat/completions",
-    model: "gpt-4o-mini",
-  },
-  {
-    name: "DeepSeek",
-    apiUrl: "https://api.deepseek.com/v1/chat/completions",
-    model: "deepseek-chat",
-  },
-  {
-    name: "Grok (xAI)",
-    apiUrl: "https://api.x.ai/v1/chat/completions",
-    model: "grok-2-latest",
-  },
-  {
-    name: "KIMI (Moonshot)",
-    apiUrl: "https://api.moonshot.cn/v1/chat/completions",
-    model: "moonshot-v1-8k",
-  },
-  {
-    name: "GLM (Z.ai)",
-    apiUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-    model: "glm-4-flash",
-  },
+  { name: "OpenAI", apiUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini" },
+  { name: "DeepSeek", apiUrl: "https://api.deepseek.com/v1/chat/completions", model: "deepseek-chat" },
+  { name: "Grok (xAI)", apiUrl: "https://api.x.ai/v1/chat/completions", model: "grok-2-latest" },
+  { name: "KIMI (Moonshot)", apiUrl: "https://api.moonshot.cn/v1/chat/completions", model: "moonshot-v1-8k" },
+  { name: "GLM (Z.ai)", apiUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions", model: "glm-4-flash" },
   {
     name: "Seed (Doubao)",
     apiUrl: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
     model: "doubao-seed-1-6-250615",
   },
+  { name: "AIHubMix", apiUrl: "https://api.aihubmix.com/v1/chat/completions", model: "gpt-4o-mini" },
   {
-    name: "AIHubMix",
-    apiUrl: "https://api.aihubmix.com/v1/chat/completions",
-    model: "gpt-4o-mini",
-  },
-  {
-    name: "Claude (通过 OpenRouter)",
+    name: "Claude (OpenRouter)",
     apiUrl: "https://openrouter.ai/api/v1/chat/completions",
     model: "anthropic/claude-3-haiku",
   },
-  {
-    name: "自定义",
-    apiUrl: "",
-    model: "",
-  },
+  { name: "自定义", apiUrl: "", model: "" },
 ];
 
 export default function SettingsScreen() {
   const colors = useColors();
   const router = useRouter();
   const auth = useAuth();
-  const appVersion = Constants.expoConfig?.version ?? "1.0.1";
+  const appVersion = Constants.expoConfig?.version ?? "1.0.0";
 
-  // AI API 配置状态
   const [apiKey, setApiKey] = useState("");
   const [apiUrl, setApiUrl] = useState("");
   const [model, setModel] = useState("");
-  const [selectedPreset, setSelectedPreset] = useState(API_PRESETS.length - 1); // 默认为自定义
+  const [selectedPreset, setSelectedPreset] = useState(API_PRESETS.length - 1);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  // 测试员模式状态
-  const [testerKey, setTesterKey] = useState("");
-  const [testerActivated, setTesterActivated] = useState(false);
-  const [fixedDiceValue, setFixedDiceValue] = useState(1);
-
-  // 图片生成 API 配置状态
   const [imageApiKey, setImageApiKey] = useState("");
   const [imageApiUrl, setImageApiUrl] = useState("");
   const [imageModel, setImageModel] = useState("");
   const [imageSize, setImageSize] = useState("");
-  const [serverApiBaseUrl, setServerApiBaseUrl] = useState("");
 
-  // 加载保存的配置
+  const [testerKey, setTesterKey] = useState("");
+  const [testerActivated, setTesterActivated] = useState(false);
+  const [fixedDiceValue, setFixedDiceValue] = useState(1);
+
+  const [showLogsModal, setShowLogsModal] = useState(false);
+  const [logsText, setLogsText] = useState("");
+  const [logsLoading, setLogsLoading] = useState(false);
+
   useEffect(() => {
-    loadConfig();
+    void loadConfig();
   }, []);
 
   async function loadConfig() {
@@ -101,54 +81,33 @@ export default function SettingsScreen() {
       setModel(config.model);
 
       const presetIndex = API_PRESETS.findIndex(
-        p => p.apiUrl === config.apiUrl && p.model === config.model
+        (item) => item.apiUrl === config.apiUrl && item.model === config.model
       );
       if (presetIndex >= 0) {
         setSelectedPreset(presetIndex);
       }
 
-      const imgConfig = await getImageConfig();
-      setImageApiKey(imgConfig.imageApiKey || "");
-      setImageApiUrl(imgConfig.imageApiUrl);
-      setImageModel(imgConfig.imageModel);
-      setImageSize(imgConfig.imageSize || "");
-
-      const baseUrl = await getServerApiBaseUrl();
-      setServerApiBaseUrl(baseUrl);
+      const imageConfig = await getImageConfig();
+      setImageApiKey(imageConfig.imageApiKey || "");
+      setImageApiUrl(imageConfig.imageApiUrl);
+      setImageModel(imageConfig.imageModel);
+      setImageSize(imageConfig.imageSize || "");
     } catch (error) {
-      console.error("Failed to load config:", error);
+      console.error("Failed to load settings:", error);
     }
   }
 
-  async function handleSaveServerApi() {
-    if (!serverApiBaseUrl.trim()) {
-      Alert.alert("错误", "请输入后端地址");
-      return;
+  function handleSelectPreset(index: number) {
+    const preset = API_PRESETS[index];
+    if (preset.name !== "自定义") {
+      setApiUrl(preset.apiUrl);
+      setModel(preset.model);
     }
-    await saveServerApiBaseUrl(serverApiBaseUrl.trim());
-    setApiBaseUrl(serverApiBaseUrl.trim());
-    Alert.alert("成功", "后端地址已保存并立即生效");
+    setSelectedPreset(index);
+    setShowPresetModal(false);
   }
 
-  async function handleSaveImageConfig() {
-    if (!imageApiUrl.trim() || !imageModel.trim()) {
-      Alert.alert("错误", "请填写图片 API URL 和模型名称");
-      return;
-    }
-    try {
-      await saveImageConfig({
-        imageApiKey: imageApiKey.trim(),
-        imageApiUrl: imageApiUrl.trim(),
-        imageModel: imageModel.trim(),
-        imageSize: imageSize.trim(),
-      });
-      Alert.alert("成功", "图片生成配置已保存");
-    } catch {
-      Alert.alert("错误", "保存失败");
-    }
-  }
-
-  async function handleSaveConfig() {
+  async function handleSaveApiConfig() {
     if (!apiKey.trim()) {
       Alert.alert("错误", "请输入 API Key");
       return;
@@ -168,63 +127,126 @@ export default function SettingsScreen() {
         apiUrl: apiUrl.trim(),
         model: model.trim(),
       });
-      Alert.alert("成功", "API 配置已保存");
+      logInfo("settings", "AI config saved");
+      Alert.alert("成功", "AI 配置已保存");
     } catch (error) {
+      console.error("save ai config failed:", error);
       Alert.alert("错误", "保存配置失败");
     }
   }
 
-  async function handleTestAPI() {
+  async function handleTestApi() {
     if (!apiKey.trim() || !apiUrl.trim() || !model.trim()) {
-      Alert.alert("错误", "请先填写完整的 API 配置");
+      Alert.alert("错误", "请先填写完整的 AI 配置");
       return;
     }
 
     setTesting(true);
     try {
-      const isValid = await testAPIKey(apiKey.trim(), apiUrl.trim(), model.trim());
-      if (isValid) {
-        Alert.alert("成功", "API Key 验证通过");
-      } else {
-        Alert.alert("失败", "API Key 无效或 API 地址错误");
-      }
+      const ok = await testAPIKey(apiKey.trim(), apiUrl.trim(), model.trim());
+      Alert.alert("测试结果", ok ? "连接成功" : "连接失败，请检查配置");
     } catch (error) {
-      Alert.alert("错误", `测试失败: ${error instanceof Error ? error.message : "未知错误"}`);
+      console.error("test ai config failed:", error);
+      Alert.alert("错误", "测试失败");
     } finally {
       setTesting(false);
     }
   }
 
-  function handleSelectPreset(index: number) {
-    const preset = API_PRESETS[index];
-    if (preset.name !== "自定义") {
-      setApiUrl(preset.apiUrl);
-      setModel(preset.model);
+  async function handleSaveImageConfig() {
+    if (!imageApiUrl.trim() || !imageModel.trim()) {
+      Alert.alert("错误", "请填写图片 API URL 和模型");
+      return;
     }
-    setSelectedPreset(index);
-    setShowPresetModal(false);
+
+    try {
+      await saveImageConfig({
+        imageApiKey: imageApiKey.trim(),
+        imageApiUrl: imageApiUrl.trim(),
+        imageModel: imageModel.trim(),
+        imageSize: imageSize.trim(),
+      });
+      logInfo("settings", "Image config saved");
+      Alert.alert("成功", "图片配置已保存");
+    } catch (error) {
+      console.error("save image config failed:", error);
+      Alert.alert("错误", "保存图片配置失败");
+    }
+  }
+
+  async function refreshLogs() {
+    setLogsLoading(true);
+    try {
+      const logs = await getAppLogs(300);
+      const text = formatLogLines(logs);
+      setLogsText(text || "暂无日志");
+    } catch (error) {
+      console.error("read logs failed:", error);
+      setLogsText("读取日志失败");
+    } finally {
+      setLogsLoading(false);
+    }
+  }
+
+  async function handleOpenLogs() {
+    setShowLogsModal(true);
+    await refreshLogs();
+  }
+
+  async function handleClearLogs() {
+    Alert.alert("清空日志", "确认清空本地日志吗？", [
+      { text: "取消", style: "cancel" },
+      {
+        text: "清空",
+        style: "destructive",
+        onPress: async () => {
+          await clearAppLogs();
+          setLogsText("暂无日志");
+          Alert.alert("完成", "日志已清空");
+        },
+      },
+    ]);
+  }
+
+  async function handleExportLogs() {
+    const exportText = logsText.trim() || "暂无日志";
+    await Share.share({
+      message: exportText,
+      title: "AIourStory Logs",
+    });
   }
 
   async function handleClearData() {
-    Alert.alert(
-      "清除所有数据",
-      "这将删除所有故事存档，此操作不可撤销。确定继续吗？",
-      [
-        { text: "取消", style: "cancel" },
-        {
-          text: "清除",
-          style: "destructive",
-          onPress: async () => {
-            const keys = await AsyncStorage.getAllKeys();
-            const storyKeys = keys.filter(
-              (k) => k.startsWith("story_") || k === "stories_index"
-            );
-            await AsyncStorage.multiRemove(storyKeys);
-            Alert.alert("完成", "所有故事数据已清除");
-          },
+    Alert.alert("清除所有数据", "这会删除所有本地故事存档，且无法撤销。", [
+      { text: "取消", style: "cancel" },
+      {
+        text: "清除",
+        style: "destructive",
+        onPress: async () => {
+          const keys = await AsyncStorage.getAllKeys();
+          const storyKeys = keys.filter((k) => k.startsWith("story_") || k === "stories_index");
+          await AsyncStorage.multiRemove(storyKeys);
+          Alert.alert("完成", "本地故事数据已清除");
         },
-      ]
-    );
+      },
+    ]);
+  }
+
+  function handleTesterVerify() {
+    if (testerKey !== "1234567") {
+      Alert.alert("错误", "测试密钥不正确");
+      return;
+    }
+    setTesterActivated(true);
+    setTestDiceValue(fixedDiceValue);
+    Alert.alert("成功", "测试模式已开启");
+  }
+
+  function handleTesterDisable() {
+    setTesterActivated(false);
+    setTesterKey("");
+    setTestDiceValue(null);
+    Alert.alert("提示", "测试模式已关闭");
   }
 
   return (
@@ -249,55 +271,57 @@ export default function SettingsScreen() {
             <View style={[styles.buttonRow, { paddingHorizontal: 16, paddingBottom: 14 }]}>
               {!auth.user?.isBound ? (
                 <TouchableOpacity
-                  onPress={() => router.push("/login" as any)}
+                  onPress={() => router.push("/login" as never)}
                   style={[styles.primaryButton, { backgroundColor: colors.primary }]}
                 >
                   <IconSymbol name="person.fill" size={18} color="#fff" />
                   <Text style={styles.primaryButtonText}>绑定/登录账号</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity
-                  onPress={() => router.push("/profile" as any)}
-                  style={[styles.secondaryButton, { borderColor: colors.border }]}
-                >
-                  <IconSymbol name="person.fill" size={18} color={colors.foreground} />
-                  <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>编辑个人资料</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity
+                    onPress={() => router.push("/profile" as never)}
+                    style={[styles.secondaryButton, { borderColor: colors.border }]}
+                  >
+                    <IconSymbol name="person.fill" size={18} color={colors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>编辑资料</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => void auth.logout()}
+                    style={[styles.secondaryButton, { borderColor: colors.border }]}
+                  >
+                    <IconSymbol name="xmark.circle" size={18} color={colors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>退出</Text>
+                  </TouchableOpacity>
+                </>
               )}
             </View>
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>后端服务</Text>
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.inputRow}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>API Base URL</Text>
-            </View>
-            <TextInput
-              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={serverApiBaseUrl}
-              onChangeText={setServerApiBaseUrl}
-              placeholder="http://8.137.71.118/v1"
-              placeholderTextColor={colors.muted}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>日志</Text>
+          <View style={styles.buttonRow}>
+            <TouchableOpacity
+              onPress={() => void handleOpenLogs()}
+              style={[styles.secondaryButton, { borderColor: colors.border }]}
+            >
+              <IconSymbol name="doc.text.fill" size={18} color={colors.foreground} />
+              <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>查看日志</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void handleClearLogs()}
+              style={[styles.dangerButton, { borderColor: colors.error, flex: 1 }]}
+            >
+              <IconSymbol name="trash.fill" size={18} color={colors.error} />
+              <Text style={[styles.dangerButtonText, { color: colors.error }]}>清空日志</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            onPress={handleSaveServerApi}
-            style={[styles.primaryButton, { backgroundColor: colors.primary }]}
-          >
-            <IconSymbol name="checkmark" size={18} color="#fff" />
-            <Text style={styles.primaryButtonText}>保存后端地址</Text>
-          </TouchableOpacity>
         </View>
 
-        {/* API Configuration Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.muted }]}>AI 配置</Text>
-          
-          {/* Preset Selector */}
+
           <TouchableOpacity
             onPress={() => setShowPresetModal(true)}
             style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -305,15 +329,12 @@ export default function SettingsScreen() {
             <View style={styles.cardRow}>
               <Text style={[styles.cardLabel, { color: colors.foreground }]}>预设</Text>
               <View style={styles.cardValueRow}>
-                <Text style={[styles.cardValue, { color: colors.muted }]}>
-                  {API_PRESETS[selectedPreset].name}
-                </Text>
+                <Text style={[styles.cardValue, { color: colors.muted }]}>{API_PRESETS[selectedPreset].name}</Text>
                 <IconSymbol name="chevron.right" size={16} color={colors.muted} />
               </View>
             </View>
           </TouchableOpacity>
 
-          {/* API Key */}
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.inputRow}>
               <Text style={[styles.inputLabel, { color: colors.foreground }]}>API Key</Text>
@@ -330,7 +351,6 @@ export default function SettingsScreen() {
             />
           </View>
 
-          {/* API URL */}
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.inputRow}>
               <Text style={[styles.inputLabel, { color: colors.foreground }]}>API URL</Text>
@@ -346,7 +366,6 @@ export default function SettingsScreen() {
             />
           </View>
 
-          {/* Model */}
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.inputRow}>
               <Text style={[styles.inputLabel, { color: colors.foreground }]}>模型</Text>
@@ -362,10 +381,9 @@ export default function SettingsScreen() {
             />
           </View>
 
-          {/* Action Buttons */}
           <View style={styles.buttonRow}>
             <TouchableOpacity
-              onPress={handleTestAPI}
+              onPress={() => void handleTestApi()}
               style={[styles.secondaryButton, { borderColor: colors.border }]}
               disabled={testing}
             >
@@ -375,7 +393,7 @@ export default function SettingsScreen() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={handleSaveConfig}
+              onPress={() => void handleSaveApiConfig()}
               style={[styles.primaryButton, { backgroundColor: colors.primary }]}
             >
               <IconSymbol name="checkmark" size={18} color="#fff" />
@@ -384,7 +402,6 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Image Generation Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.muted }]}>图片生成配置</Text>
 
@@ -396,7 +413,7 @@ export default function SettingsScreen() {
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
               value={imageApiKey}
               onChangeText={setImageApiKey}
-              placeholder="图片生成服务的 API Key"
+              placeholder="图片服务 API Key"
               placeholderTextColor={colors.muted}
               secureTextEntry
               autoCapitalize="none"
@@ -436,13 +453,13 @@ export default function SettingsScreen() {
 
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.inputRow}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Size（可选）</Text>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Size (可选)</Text>
             </View>
             <TextInput
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
               value={imageSize}
               onChangeText={setImageSize}
-              placeholder="例如: 1024x1024（留空则不传 size）"
+              placeholder="例如: 1024x1024"
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -450,7 +467,7 @@ export default function SettingsScreen() {
           </View>
 
           <TouchableOpacity
-            onPress={handleSaveImageConfig}
+            onPress={() => void handleSaveImageConfig()}
             style={[styles.primaryButton, { backgroundColor: colors.primary }]}
           >
             <IconSymbol name="checkmark" size={18} color="#fff" />
@@ -458,46 +475,8 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* About Section */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>关于</Text>
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.cardRow}>
-              <Text style={[styles.cardLabel, { color: colors.foreground }]}>应用名称</Text>
-              <Text style={[styles.cardValue, { color: colors.muted }]}>AIourStory</Text>
-            </View>
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
-            <View style={styles.cardRow}>
-              <Text style={[styles.cardLabel, { color: colors.foreground }]}>版本</Text>
-              <Text style={[styles.cardValue, { color: colors.muted }]}>{appVersion}</Text>
-            </View>
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
-            <View style={styles.cardRow}>
-              <Text style={[styles.cardLabel, { color: colors.foreground }]}>AI引擎</Text>
-              <Text style={[styles.cardValue, { color: colors.muted }]}>用户自定义 API</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* How to play */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>玩法说明</Text>
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.helpText, { color: colors.foreground }]}>
-              1. 在上方配置你的 AI API{"\n"}
-              2. 创建新故事，填写标题和故事开头{"\n"}
-              3. AI会根据你的设定生成剧情{"\n"}
-              4. 点击对话框推进剧情{"\n"}
-              5. 遇到选项时做出选择{"\n"}
-              6. AI根据你的选择继续生成剧情{"\n"}
-              7. 每个选择都会影响故事走向
-            </Text>
-          </View>
-        </View>
-
-        {/* Tester Mode */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>测试员验证</Text>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>测试员模式</Text>
           {!testerActivated ? (
             <>
               <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -508,7 +487,7 @@ export default function SettingsScreen() {
                   style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
                   value={testerKey}
                   onChangeText={setTesterKey}
-                  placeholder="输入测试员密钥"
+                  placeholder="输入测试密钥"
                   placeholderTextColor={colors.muted}
                   secureTextEntry
                   autoCapitalize="none"
@@ -516,15 +495,7 @@ export default function SettingsScreen() {
                 />
               </View>
               <TouchableOpacity
-                onPress={() => {
-                  if (testerKey === "1234567") {
-                    setTesterActivated(true);
-                    setTestDiceValue(fixedDiceValue);
-                    Alert.alert("成功", "测试模式已激活");
-                  } else {
-                    Alert.alert("错误", "密钥无效");
-                  }
-                }}
+                onPress={handleTesterVerify}
                 style={[styles.primaryButton, { backgroundColor: colors.primary }]}
               >
                 <IconSymbol name="checkmark.circle" size={18} color="#fff" />
@@ -538,41 +509,31 @@ export default function SettingsScreen() {
                   <Text style={[styles.cardLabel, { color: colors.foreground }]}>固定骰子点数</Text>
                   <Text style={[styles.cardValue, { color: colors.primary }]}>{fixedDiceValue}</Text>
                 </View>
-                <View style={{ flexDirection: "row", justifyContent: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((v) => (
+                <View style={styles.diceRow}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((value) => (
                     <TouchableOpacity
-                      key={v}
+                      key={value}
                       onPress={() => {
-                        setFixedDiceValue(v);
-                        setTestDiceValue(v);
+                        setFixedDiceValue(value);
+                        setTestDiceValue(value);
                       }}
-                      style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 8,
-                        backgroundColor: fixedDiceValue === v ? colors.primary : colors.background,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        borderWidth: 1,
-                        borderColor: fixedDiceValue === v ? colors.primary : colors.border,
-                      }}
+                      style={[
+                        styles.diceItem,
+                        {
+                          backgroundColor: fixedDiceValue === value ? colors.primary : colors.background,
+                          borderColor: fixedDiceValue === value ? colors.primary : colors.border,
+                        },
+                      ]}
                     >
-                      <Text style={{
-                        fontSize: 16,
-                        fontWeight: "700",
-                        color: fixedDiceValue === v ? "#fff" : colors.foreground,
-                      }}>{v}</Text>
+                      <Text style={{ color: fixedDiceValue === value ? "#fff" : colors.foreground, fontWeight: "700" }}>
+                        {value}
+                      </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
               <TouchableOpacity
-                onPress={() => {
-                  setTesterActivated(false);
-                  setTesterKey("");
-                  setTestDiceValue(null);
-                  Alert.alert("提示", "测试模式已关闭");
-                }}
+                onPress={handleTesterDisable}
                 style={[styles.dangerButton, { borderColor: colors.error }]}
               >
                 <IconSymbol name="xmark.circle" size={18} color={colors.error} />
@@ -582,23 +543,33 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        {/* Data */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.muted }]}>数据管理</Text>
           <TouchableOpacity
-            onPress={handleClearData}
+            onPress={() => void handleClearData()}
             style={[styles.dangerButton, { borderColor: colors.error }]}
-            activeOpacity={0.7}
           >
             <IconSymbol name="trash.fill" size={18} color={colors.error} />
-            <Text style={[styles.dangerButtonText, { color: colors.error }]}>
-              清除所有故事数据
-            </Text>
+            <Text style={[styles.dangerButtonText, { color: colors.error }]}>清除所有故事数据</Text>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>关于</Text>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.cardRow}>
+              <Text style={[styles.cardLabel, { color: colors.foreground }]}>应用名称</Text>
+              <Text style={[styles.cardValue, { color: colors.muted }]}>AIourStory</Text>
+            </View>
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+            <View style={styles.cardRow}>
+              <Text style={[styles.cardLabel, { color: colors.foreground }]}>版本</Text>
+              <Text style={[styles.cardValue, { color: colors.muted }]}>{appVersion}</Text>
+            </View>
+          </View>
         </View>
       </ScrollView>
 
-      {/* Preset Selection Modal */}
       <Modal
         visible={showPresetModal}
         transparent
@@ -614,27 +585,71 @@ export default function SettingsScreen() {
             <Text style={[styles.modalTitle, { color: colors.foreground }]}>选择 API 预设</Text>
             {API_PRESETS.map((preset, index) => (
               <TouchableOpacity
-                key={index}
+                key={preset.name}
                 style={[
                   styles.presetItem,
-                  selectedPreset === index && { backgroundColor: colors.primary + "20" },
+                  selectedPreset === index && { backgroundColor: `${colors.primary}20` },
                 ]}
                 onPress={() => handleSelectPreset(index)}
               >
-                <Text style={[
-                  styles.presetName,
-                  { color: colors.foreground },
-                  selectedPreset === index && { color: colors.primary }
-                ]}>
+                <Text
+                  style={[
+                    styles.presetName,
+                    { color: colors.foreground },
+                    selectedPreset === index && { color: colors.primary },
+                  ]}
+                >
                   {preset.name}
                 </Text>
-                {selectedPreset === index && (
+                {selectedPreset === index ? (
                   <IconSymbol name="checkmark" size={20} color={colors.primary} />
-                )}
+                ) : null}
               </TouchableOpacity>
             ))}
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={showLogsModal} animationType="slide" onRequestClose={() => setShowLogsModal(false)}>
+        <ScreenContainer>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <View style={styles.logHeader}>
+              <TouchableOpacity onPress={() => setShowLogsModal(false)}>
+                <Text style={[styles.logHeaderAction, { color: colors.primary }]}>关闭</Text>
+              </TouchableOpacity>
+              <Text style={[styles.headerTitle, { color: colors.foreground, fontSize: 22 }]}>应用日志</Text>
+              <TouchableOpacity onPress={() => void refreshLogs()}>
+                <Text style={[styles.logHeaderAction, { color: colors.primary }]}>刷新</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={{ paddingHorizontal: 20, paddingTop: 12, gap: 10 }}>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                onPress={() => void handleExportLogs()}
+                style={[styles.secondaryButton, { borderColor: colors.border }]}
+              >
+                <IconSymbol name="paperplane.fill" size={18} color={colors.foreground} />
+                <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>导出日志</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void handleClearLogs()}
+                style={[styles.dangerButton, { borderColor: colors.error, flex: 1 }]}
+              >
+                <IconSymbol name="trash.fill" size={18} color={colors.error} />
+                <Text style={[styles.dangerButtonText, { color: colors.error }]}>清空日志</Text>
+              </TouchableOpacity>
+            </View>
+            {logsLoading ? <Text style={{ color: colors.muted }}>日志加载中...</Text> : null}
+          </View>
+
+          <ScrollView style={{ padding: 20 }} contentContainerStyle={{ paddingBottom: 30 }}>
+            <Text selectable style={[styles.logText, { color: colors.foreground }]}>
+              {logsText || "暂无日志"}
+            </Text>
+          </ScrollView>
+        </ScreenContainer>
       </Modal>
     </ScreenContainer>
   );
@@ -742,11 +757,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
   },
-  helpText: {
-    fontSize: 14,
-    lineHeight: 24,
-    padding: 16,
-  },
   dangerButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -759,6 +769,22 @@ const styles = StyleSheet.create({
   dangerButtonText: {
     fontSize: 15,
     fontWeight: "600",
+  },
+  diceRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    flexWrap: "wrap",
+  },
+  diceItem: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
   },
   modalOverlay: {
     flex: 1,
@@ -789,5 +815,18 @@ const styles = StyleSheet.create({
   presetName: {
     fontSize: 16,
     fontWeight: "500",
+  },
+  logHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  logHeaderAction: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  logText: {
+    fontSize: 12,
+    lineHeight: 18,
   },
 });

@@ -2340,21 +2340,19 @@ export default function GameScreen() {
         </View>
       </Modal>
 
-      {__DEV__ && (
-        <ContextMonitor
-          threshold={HISTORY_SUMMARY_TRIGGER_CHARS}
-          currentFullChars={currentFullHistoryChars}
-          currentRawChars={currentHistoryChars}
-          currentSentChars={currentSentChars}
-          currentTruncated={currentTruncated}
-          currentPacing={currentPacing}
-          currentMinCharsTarget={currentMinCharsTarget}
-          currentGeneratedChars={currentGeneratedChars}
-          lastSentMetrics={lastSentContextMetrics}
-          generating={generating}
-          historyStuckCount={historyStuckCount}
-        />
-      )}
+      <ContextMonitor
+        threshold={HISTORY_SUMMARY_TRIGGER_CHARS}
+        currentFullChars={currentFullHistoryChars}
+        currentRawChars={currentHistoryChars}
+        currentSentChars={currentSentChars}
+        currentTruncated={currentTruncated}
+        currentPacing={currentPacing}
+        currentMinCharsTarget={currentMinCharsTarget}
+        currentGeneratedChars={currentGeneratedChars}
+        lastSentMetrics={lastSentContextMetrics}
+        generating={generating}
+        historyStuckCount={historyStuckCount}
+      />
     </ScreenContainer>
   );
 }

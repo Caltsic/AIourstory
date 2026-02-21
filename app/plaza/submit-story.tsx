@@ -22,6 +22,18 @@ export default function SubmitStoryScreen() {
   const router = useRouter();
   const auth = useAuth();
   const params = useLocalSearchParams<Record<string, string | string[]>>();
+  const paramTitle = typeof params.title === "string" ? params.title : "";
+  const paramPremise = typeof params.premise === "string" ? params.premise : "";
+  const paramGenre = typeof params.genre === "string" ? params.genre : "";
+  const paramProtagonistName =
+    typeof params.protagonistName === "string" ? params.protagonistName : "";
+  const paramProtagonistDescription =
+    typeof params.protagonistDescription === "string" ? params.protagonistDescription : "";
+  const paramProtagonistAppearance =
+    typeof params.protagonistAppearance === "string" ? params.protagonistAppearance : "";
+  const paramDifficulty = typeof params.difficulty === "string" ? params.difficulty : "普通";
+  const paramInitialPacing =
+    typeof params.initialPacing === "string" ? params.initialPacing : "轻松";
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -45,28 +57,32 @@ export default function SubmitStoryScreen() {
       const all = await getAllStories();
       setStories(all);
 
-      const prefillTitle = typeof params.title === "string" ? params.title : "";
-      if (prefillTitle) {
+      if (paramTitle) {
         setSelectedStoryId("custom");
-        setTitle(prefillTitle);
-        setPremise(typeof params.premise === "string" ? params.premise : "");
-        setGenre(typeof params.genre === "string" ? params.genre : "");
-        setProtagonistName(typeof params.protagonistName === "string" ? params.protagonistName : "");
-        setProtagonistDescription(
-          typeof params.protagonistDescription === "string" ? params.protagonistDescription : ""
-        );
-        setProtagonistAppearance(
-          typeof params.protagonistAppearance === "string" ? params.protagonistAppearance : ""
-        );
-        setDifficulty(typeof params.difficulty === "string" ? params.difficulty : "普通");
-        setInitialPacing(typeof params.initialPacing === "string" ? params.initialPacing : "轻松");
+        setTitle(paramTitle);
+        setPremise(paramPremise);
+        setGenre(paramGenre);
+        setProtagonistName(paramProtagonistName);
+        setProtagonistDescription(paramProtagonistDescription);
+        setProtagonistAppearance(paramProtagonistAppearance);
+        setDifficulty(paramDifficulty);
+        setInitialPacing(paramInitialPacing);
       }
 
       setLoading(false);
     }
 
-    run();
-  }, [params]);
+    void run();
+  }, [
+    paramDifficulty,
+    paramGenre,
+    paramInitialPacing,
+    paramPremise,
+    paramProtagonistAppearance,
+    paramProtagonistDescription,
+    paramProtagonistName,
+    paramTitle,
+  ]);
 
   const selectedStory = useMemo(
     () => stories.find((item) => item.id === selectedStoryId) || null,

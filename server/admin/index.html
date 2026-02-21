@@ -1,51 +1,320 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Story Admin</title>
+    <title>AIourStory 审核后台</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
-      .wrap { max-width: 1000px; margin: 0 auto; padding: 16px; }
-      .card { background: #111827; border: 1px solid #334155; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-      input, select, textarea, button { border-radius: 8px; border: 1px solid #475569; background: #0b1220; color: #e2e8f0; padding: 8px; }
-      button { cursor: pointer; }
-      .row { display: flex; gap: 8px; flex-wrap: wrap; }
-      .space { justify-content: space-between; align-items: center; }
-      .item { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #334155; }
-      .ok { color: #34d399; }
-      .err { color: #f87171; }
-      pre { white-space: pre-wrap; background: #0b1220; padding: 8px; border-radius: 8px; }
+      :root {
+        --bg: #f5f7fb;
+        --surface: #ffffff;
+        --surface-2: #f9fbff;
+        --text: #1f2937;
+        --muted: #6b7280;
+        --line: #d8e1ef;
+        --primary: #0f766e;
+        --primary-soft: #d8f3f1;
+        --danger: #dc2626;
+        --ok: #0f766e;
+        --shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--text);
+        background: var(--bg);
+        font-family: "Space Grotesk", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+
+      .geometry {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image:
+          linear-gradient(to right, rgba(15, 118, 110, 0.06) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(15, 118, 110, 0.06) 1px, transparent 1px);
+        background-size: 36px 36px;
+      }
+
+      .geometry::before,
+      .geometry::after {
+        content: "";
+        position: absolute;
+        border: 1.5px solid var(--line);
+        transform: rotate(-10deg);
+      }
+
+      .geometry::before {
+        width: 320px;
+        height: 320px;
+        top: -110px;
+        right: -40px;
+      }
+
+      .geometry::after {
+        width: 240px;
+        height: 240px;
+        bottom: -80px;
+        left: -60px;
+      }
+
+      .wrap {
+        position: relative;
+        z-index: 1;
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 28px 18px 40px;
+      }
+
+      .head {
+        margin-bottom: 16px;
+      }
+
+      .head h1 {
+        margin: 0;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+      }
+
+      .head p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px;
+        box-shadow: var(--shadow);
+      }
+
+      .title {
+        margin: 0 0 10px;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 180px;
+      }
+
+      .field.wide {
+        flex: 1;
+        min-width: 260px;
+      }
+
+      label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        color: var(--text);
+        padding: 10px 11px;
+        outline: none;
+      }
+
+      input:focus,
+      select:focus,
+      textarea:focus {
+        border-color: rgba(15, 118, 110, 0.6);
+        box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+      }
+
+      .btn {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 13px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .btn-primary {
+        background: var(--primary);
+        color: #fff;
+      }
+
+      .btn-ghost {
+        background: #fff;
+        color: var(--text);
+        border: 1px solid var(--line);
+      }
+
+      .btn-danger {
+        background: #fff5f5;
+        color: var(--danger);
+        border: 1px solid #fecaca;
+      }
+
+      .status {
+        min-height: 20px;
+        margin: 8px 0 0;
+        font-size: 13px;
+        color: var(--danger);
+      }
+
+      .status.ok {
+        color: var(--ok);
+      }
+
+      .item {
+        margin-top: 12px;
+        border: 1px dashed var(--line);
+        border-radius: 12px;
+        background: #fff;
+        padding: 12px;
+      }
+
+      .item h3 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .meta {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      pre {
+        margin: 10px 0;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fbfdff;
+        padding: 10px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        max-height: 240px;
+        overflow: auto;
+      }
+
+      .remember {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .remember input {
+        width: auto;
+        margin: 0;
+      }
+
+      @media (max-width: 860px) {
+        .wrap {
+          padding: 14px;
+        }
+        .head h1 {
+          font-size: 24px;
+        }
+        .field.wide {
+          min-width: 100%;
+        }
+      }
     </style>
   </head>
   <body>
+    <div class="geometry"></div>
     <div class="wrap">
-      <h1>审核后台</h1>
-      <div class="card">
-        <div class="row">
-          <input id="baseUrl" placeholder="API Base URL" value="http://127.0.0.1:3000/v1" style="min-width:280px" />
-          <input id="username" placeholder="管理员用户名" />
-          <input id="password" placeholder="密码" type="password" />
-          <button id="loginBtn">登录</button>
-        </div>
-        <p id="status" class="err"></p>
+      <div class="head">
+        <h1>AIourStory 审核后台</h1>
+        <p>用于审核提示词与故事投稿，登录后即可批量处理待审内容。</p>
       </div>
 
-      <div class="card">
-        <div class="row space">
+      <div class="grid">
+        <div class="card">
+          <h2 class="title">管理员登录</h2>
           <div class="row">
-            <select id="typeSel">
-              <option value="prompt">提示词</option>
-              <option value="story">故事</option>
-            </select>
-            <button id="loadBtn">加载待审</button>
+            <div class="field wide">
+              <label for="baseUrl">API Base URL</label>
+              <input id="baseUrl" value="http://8.137.71.118/v1" />
+            </div>
+            <div class="field">
+              <label for="username">用户名</label>
+              <input id="username" placeholder="admin" />
+            </div>
+            <div class="field">
+              <label for="password">密码</label>
+              <input id="password" type="password" placeholder="请输入密码" />
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" id="loginBtn">登录</button>
+            </div>
           </div>
-          <button id="logoutBtn">退出</button>
+          <label class="remember">
+            <input type="checkbox" id="rememberPwd" />
+            记住账号与密码（保存在当前浏览器）
+          </label>
+          <p id="status" class="status"></p>
         </div>
-      </div>
 
-      <div class="card">
-        <div id="list"></div>
+        <div class="card">
+          <h2 class="title">审核操作</h2>
+          <div class="row">
+            <div class="field">
+              <label for="typeSel">审核类型</label>
+              <select id="typeSel">
+                <option value="prompt">提示词</option>
+                <option value="story">故事</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" id="loadBtn">加载待审</button>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn btn-ghost" id="logoutBtn">退出</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="title">待审列表</h2>
+          <div id="list"></div>
+        </div>
       </div>
     </div>
 

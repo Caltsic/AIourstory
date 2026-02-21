@@ -1,6 +1,6 @@
 ﻿import { randomUUID, createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { users, refreshTokens } from "../db/schema.js";
 import { signAccessToken, signRefreshToken, verifyToken } from "../utils/jwt.js";
@@ -69,6 +69,27 @@ export async function deviceLogin(deviceId: string) {
 
   let user = await db.select().from(users).where(eq(users.deviceId, deviceId)).get();
 
+  // Bound accounts should not be resumed via device login. On logout we must
+  // always land on an anonymous session for the current device.
+  if (user?.isBound) {
+    await db
+      .update(users)
+      .set({
+        deviceId: null,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(users.id, user.id));
+    user = undefined;
+  }
+
+  if (!user) {
+    user = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.deviceId, deviceId), eq(users.isBound, false)))
+      .get();
+  }
+
   if (!user) {
     const uuid = randomUUID();
     await db.insert(users).values({
@@ -133,6 +154,7 @@ export async function register(
       username,
       passwordHash,
       nickname: nickname || username,
+      deviceId: null,
       isBound: true,
       role,
       updatedAt: new Date().toISOString(),

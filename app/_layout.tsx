@@ -1,13 +1,19 @@
 import "@/global.css";
+import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { ThemeProvider } from "@/lib/theme-provider";
 import { AuthProvider } from "@/lib/auth-provider";
+import { initAppLogger } from "@/lib/app-logger";
 
 export const unstable_settings = {
   anchor: "(tabs)",
 };
 
 export default function RootLayout() {
+  useEffect(() => {
+    initAppLogger();
+  }, []);
+
   const content = (
     <ThemeProvider>
       <AuthProvider>
