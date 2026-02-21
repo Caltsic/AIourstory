@@ -5,6 +5,14 @@ function toInt(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function toBool(value: string | undefined, fallback: boolean) {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 const isProduction = process.env.NODE_ENV === "production";
 const jwtSecret = process.env.JWT_SECRET || "dev-secret-change-in-production";
 
@@ -15,7 +23,7 @@ if (isProduction && jwtSecret.length < 32) {
 export const config = {
   port: toInt(process.env.PORT, 3000),
   host: process.env.HOST || "0.0.0.0",
-  trustProxy: process.env.TRUST_PROXY !== "false",
+  trustProxy: toBool(process.env.TRUST_PROXY, false),
 
   databaseUrl: process.env.DATABASE_URL || "file:./data/aistory.db",
 

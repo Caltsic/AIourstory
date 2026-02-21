@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
@@ -20,12 +20,12 @@ export default function PromptDetailScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const promptEntries = useMemo(() => {
-    if (!item) return [] as Array<[string, string]>;
+    if (!item) return [] as [string, string][];
     try {
       const parsed = JSON.parse(item.promptsJson) as Record<string, string>;
       return Object.entries(parsed);
     } catch {
-      return [] as Array<[string, string]>;
+      return [] as [string, string][];
     }
   }, [item]);
 

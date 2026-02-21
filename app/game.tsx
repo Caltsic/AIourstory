@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Text,
   View,
@@ -18,10 +18,6 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withDelay,
   FadeIn,
   FadeInDown,
 } from "react-native-reanimated";
@@ -216,14 +212,11 @@ export default function GameScreen() {
   const displayText = currentSegment?.text ?? "";
   const { displayed, done, skip } = useTypewriter(displayText, 30);
 
-  // LLM API calls - check config on load
-  const [apiConfigured, setApiConfigured] = useState(false);
-
   // Load story
   useEffect(() => {
     if (!storyId) return;
     loadStory();
-  }, [storyId]);
+  }, [storyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function clearDiceTimers() {
     if (diceRollIntervalRef.current) {
@@ -288,7 +281,6 @@ export default function GameScreen() {
         setLoading(false);
         return;
       }
-      setApiConfigured(true);
       // Generate initial story
       generateInitial(s);
     } else {

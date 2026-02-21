@@ -1,5 +1,6 @@
-const DEFAULT_BASE_URL = "http://8.137.71.118/v1";
+const DEFAULT_BASE_URL = "https://8.137.71.118/v1";
 const STORAGE_KEY = "aistory_admin_login_v1";
+const ALLOW_INSECURE_HTTP = new URLSearchParams(window.location.search).get("allowInsecureHttp") === "1";
 
 let accessToken = "";
 let baseUrl = DEFAULT_BASE_URL;
@@ -20,6 +21,29 @@ function setStatus(text, ok = false) {
 function normalizeBaseUrl(url) {
   const normalized = (url || DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
   return normalized || DEFAULT_BASE_URL;
+}
+
+function isLocalHost(hostname) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function ensureSecureBaseUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("API Base URL invalid");
+  }
+
+  if (!ALLOW_INSECURE_HTTP && parsed.protocol === "http:" && !isLocalHost(parsed.hostname)) {
+    throw new Error("HTTPS is required for non-local API endpoints");
+  }
+}
+
+function resolveBaseUrl(url) {
+  const normalized = normalizeBaseUrl(url);
+  ensureSecureBaseUrl(normalized);
+  return normalized;
 }
 
 function loadSavedLogin() {
@@ -60,11 +84,11 @@ async function request(path, options = {}) {
 
 async function login() {
   try {
-    baseUrl = normalizeBaseUrl(baseInput.value);
+    baseUrl = resolveBaseUrl(baseInput.value);
     const user = userInput.value.trim();
     const pass = passInput.value;
 
-    if (!user || !pass) throw new Error("请输入用户名和密码");
+    if (!user || !pass) throw new Error("Username and password are required");
 
     const loginData = await request("/auth/login", {
       method: "POST",
@@ -73,82 +97,134 @@ async function login() {
 
     accessToken = loginData.accessToken;
     saveLoginPreferences();
-    setStatus("登录成功", true);
+    setStatus("Login success", true);
     await loadPending();
   } catch (err) {
-    setStatus(err.message || "登录失败");
+    setStatus(err.message || "Login failed");
   }
+}
+
+function createMeta(text) {
+  const p = document.createElement("p");
+  p.className = "meta";
+  p.textContent = text;
+  return p;
+}
+
+function renderPendingItem(type, item) {
+  const uuid = typeof item?.uuid === "string" ? item.uuid : "";
+  const title = type === "prompt" ? item?.name : item?.title;
+  const description = type === "prompt" ? item?.description : item?.premise;
+  const payloadText =
+    type === "prompt" ? item?.promptsJson : JSON.stringify(item ?? {}, null, 2);
+
+  const card = document.createElement("div");
+  card.className = "item";
+  if (uuid) card.dataset.uuid = uuid;
+
+  const h3 = document.createElement("h3");
+  h3.textContent = String(title || "(untitled)");
+  card.appendChild(h3);
+
+  const nickname = item?.author?.nickname || "unknown";
+  const username = item?.author?.username || "-";
+  card.appendChild(createMeta(`Author: ${nickname} (${username})`));
+  card.appendChild(createMeta(String(description || "No description")));
+
+  const pre = document.createElement("pre");
+  pre.textContent = typeof payloadText === "string" ? payloadText : String(payloadText || "");
+  card.appendChild(pre);
+
+  const row = document.createElement("div");
+  row.className = "row";
+
+  const approveBtn = document.createElement("button");
+  approveBtn.className = "btn btn-primary";
+  approveBtn.type = "button";
+  approveBtn.textContent = "Approve";
+  approveBtn.addEventListener("click", () => approve(type, uuid));
+
+  const reasonInput = document.createElement("input");
+  reasonInput.placeholder = "Reject reason (optional)";
+  reasonInput.style.minWidth = "220px";
+
+  const rejectBtn = document.createElement("button");
+  rejectBtn.className = "btn btn-danger";
+  rejectBtn.type = "button";
+  rejectBtn.textContent = "Reject";
+  rejectBtn.addEventListener("click", () => reject(type, uuid, reasonInput.value));
+
+  if (!uuid) {
+    approveBtn.disabled = true;
+    rejectBtn.disabled = true;
+    reasonInput.disabled = true;
+  }
+
+  row.appendChild(approveBtn);
+  row.appendChild(reasonInput);
+  row.appendChild(rejectBtn);
+  card.appendChild(row);
+
+  return card;
 }
 
 async function loadPending() {
   try {
-    if (!accessToken) throw new Error("请先登录");
+    if (!accessToken) throw new Error("Please login first");
 
     const type = typeSel.value;
     const path = type === "prompt" ? "/admin/review/prompts" : "/admin/review/stories";
     const items = await request(path);
 
+    listEl.replaceChildren();
+
     if (!Array.isArray(items) || !items.length) {
-      listEl.innerHTML = "<p style='color:#6b7280'>暂无待审核内容</p>";
+      const empty = document.createElement("p");
+      empty.style.color = "#6b7280";
+      empty.textContent = "No pending items";
+      listEl.appendChild(empty);
       return;
     }
 
-    listEl.innerHTML = items
-      .map((item) => {
-        const title = type === "prompt" ? item.name : item.title;
-        const desc = type === "prompt" ? item.description : item.premise;
-        const payloadText =
-          type === "prompt" ? item.promptsJson : JSON.stringify(item, null, 2);
-        return `
-          <div class="item" data-uuid="${item.uuid}">
-            <h3>${title}</h3>
-            <p class="meta">作者：${item.author?.nickname || "未知"}（${item.author?.username || "-"})</p>
-            <p class="meta">${desc || "无描述"}</p>
-            <pre>${payloadText}</pre>
-            <div class="row">
-              <button class="btn btn-primary" onclick="approve('${type}','${item.uuid}')">通过</button>
-              <input id="reason-${item.uuid}" placeholder="驳回原因（可选）" style="min-width:220px" />
-              <button class="btn btn-danger" onclick="reject('${type}','${item.uuid}')">驳回</button>
-            </div>
-          </div>
-        `;
-      })
-      .join("");
+    for (const item of items) {
+      listEl.appendChild(renderPendingItem(type, item));
+    }
   } catch (err) {
-    setStatus(err.message || "加载失败");
+    setStatus(err.message || "Load failed");
   }
 }
 
 async function approve(type, uuid) {
   try {
+    if (!uuid) throw new Error("Item uuid missing");
     await request(`/admin/review/${type}/${uuid}/approve`, { method: "POST" });
-    setStatus("操作成功", true);
+    setStatus("Operation success", true);
     await loadPending();
   } catch (err) {
-    setStatus(err.message || "审批失败");
+    setStatus(err.message || "Approve failed");
   }
 }
 
-async function reject(type, uuid) {
+async function reject(type, uuid, reasonValue = "") {
   try {
-    const reasonInput = document.getElementById(`reason-${uuid}`);
-    const reason = reasonInput?.value?.trim() || "不符合社区规范";
+    if (!uuid) throw new Error("Item uuid missing");
+    const reason = reasonValue.trim() || "Not compliant with community guidelines";
     await request(`/admin/review/${type}/${uuid}/reject`, {
       method: "POST",
       body: JSON.stringify({ reason }),
     });
-    setStatus("操作成功", true);
+    setStatus("Operation success", true);
     await loadPending();
   } catch (err) {
-    setStatus(err.message || "驳回失败");
+    setStatus(err.message || "Reject failed");
   }
 }
 
 function logout() {
   accessToken = "";
-  listEl.innerHTML = "";
+  listEl.replaceChildren();
   saveLoginPreferences();
-  setStatus("已退出");
+  setStatus("Logged out");
 }
 
 document.getElementById("loginBtn").addEventListener("click", login);

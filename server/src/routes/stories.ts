@@ -5,6 +5,50 @@ import { db } from "../db/index.js";
 import { users } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
+const storyCreateBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "premise", "genre", "protagonistName"],
+  properties: {
+    title: { type: "string", minLength: 1, maxLength: 50 },
+    premise: { type: "string", minLength: 10, maxLength: 5000 },
+    genre: { type: "string", minLength: 1, maxLength: 50 },
+    protagonistName: { type: "string", minLength: 1, maxLength: 50 },
+    protagonistDescription: { type: "string", minLength: 0, maxLength: 1000 },
+    protagonistAppearance: { type: "string", minLength: 0, maxLength: 1000 },
+    difficulty: { type: "string", minLength: 1, maxLength: 50 },
+    initialPacing: { type: "string", minLength: 1, maxLength: 50 },
+    extraDescription: { type: "string", minLength: 0, maxLength: 3000 },
+    tags: {
+      type: "array",
+      maxItems: 30,
+      items: { type: "string", minLength: 1, maxLength: 32 },
+    },
+  },
+} as const;
+
+const storyUpdateBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    title: { type: "string", minLength: 1, maxLength: 50 },
+    premise: { type: "string", minLength: 10, maxLength: 5000 },
+    genre: { type: "string", minLength: 1, maxLength: 50 },
+    protagonistName: { type: "string", minLength: 1, maxLength: 50 },
+    protagonistDescription: { type: "string", minLength: 0, maxLength: 1000 },
+    protagonistAppearance: { type: "string", minLength: 0, maxLength: 1000 },
+    difficulty: { type: "string", minLength: 1, maxLength: 50 },
+    initialPacing: { type: "string", minLength: 1, maxLength: 50 },
+    extraDescription: { type: "string", minLength: 0, maxLength: 3000 },
+    tags: {
+      type: "array",
+      maxItems: 30,
+      items: { type: "string", minLength: 1, maxLength: 32 },
+    },
+  },
+} as const;
+
 async function getCurrentUserId(userUuid?: string): Promise<number | undefined> {
   if (!userUuid) return undefined;
   const user = await db.select({ id: users.id }).from(users).where(eq(users.uuid, userUuid)).get();
@@ -69,13 +113,17 @@ export async function storyRoutes(app: FastifyInstance) {
       extraDescription?: string;
       tags?: string[];
     };
-  }>("/stories", { preHandler: [requireBound] }, async (request) => {
-    return storyService.create(request.user!.sub, request.body);
-  });
+  }>(
+    "/stories",
+    { preHandler: [requireBound], schema: { body: storyCreateBodySchema } },
+    async (request) => {
+      return storyService.create(request.user!.sub, request.body);
+    }
+  );
 
   app.put<{ Params: { uuid: string }; Body: Record<string, unknown> }>(
     "/stories/:uuid",
-    { preHandler: [requireBound] },
+    { preHandler: [requireBound], schema: { body: storyUpdateBodySchema } },
     async (request) => {
       return storyService.update(request.params.uuid, request.user!.sub, request.body);
     }

@@ -5,6 +5,38 @@ import { db } from "../db/index.js";
 import { users } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
+const promptCreateBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "description", "promptsJson", "tags"],
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 50 },
+    description: { type: "string", minLength: 0, maxLength: 2000 },
+    promptsJson: { type: "string", minLength: 2, maxLength: 200000 },
+    tags: {
+      type: "array",
+      maxItems: 30,
+      items: { type: "string", minLength: 1, maxLength: 32 },
+    },
+  },
+} as const;
+
+const promptUpdateBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 50 },
+    description: { type: "string", minLength: 0, maxLength: 2000 },
+    promptsJson: { type: "string", minLength: 2, maxLength: 200000 },
+    tags: {
+      type: "array",
+      maxItems: 30,
+      items: { type: "string", minLength: 1, maxLength: 32 },
+    },
+  },
+} as const;
+
 async function getCurrentUserId(userUuid?: string): Promise<number | undefined> {
   if (!userUuid) return undefined;
   const user = await db.select({ id: users.id }).from(users).where(eq(users.uuid, userUuid)).get();
@@ -65,16 +97,24 @@ export async function promptRoutes(app: FastifyInstance) {
 
   app.post<{
     Body: { name: string; description: string; promptsJson: string; tags: string[] };
-  }>("/prompts", { preHandler: [requireBound] }, async (request) => {
-    return promptService.create(request.user!.sub, request.body);
-  });
+  }>(
+    "/prompts",
+    { preHandler: [requireBound], schema: { body: promptCreateBodySchema } },
+    async (request) => {
+      return promptService.create(request.user!.sub, request.body);
+    }
+  );
 
   app.put<{
     Params: { uuid: string };
     Body: { name?: string; description?: string; promptsJson?: string; tags?: string[] };
-  }>("/prompts/:uuid", { preHandler: [requireBound] }, async (request) => {
-    return promptService.update(request.params.uuid, request.user!.sub, request.body);
-  });
+  }>(
+    "/prompts/:uuid",
+    { preHandler: [requireBound], schema: { body: promptUpdateBodySchema } },
+    async (request) => {
+      return promptService.update(request.params.uuid, request.user!.sub, request.body);
+    }
+  );
 
   app.delete<{ Params: { uuid: string } }>(
     "/prompts/:uuid",

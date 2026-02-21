@@ -8,6 +8,7 @@ This checklist is for the current deployment topology:
 ## 1. Must do now
 - [ ] Rotate all production secrets immediately.
 - [ ] Ensure `server/.env` is never committed.
+- [ ] Set `TRUST_PROXY=true` only when API is behind your trusted Nginx reverse proxy.
 - [ ] Add Nginx basic auth in front of `/admin`.
 - [ ] Restrict inbound ports to `22`, `80`, `443` only.
 - [ ] Enable firewall rules (`ufw`) and brute-force protection (`fail2ban`).

@@ -3,15 +3,35 @@ import { config } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
 import * as authService from "../services/auth.service.js";
 
+const authRateLimitConfig = {
+  rateLimit: {
+    max: config.rateLimitAuthMax,
+    timeWindow: config.rateLimitAuthWindow,
+  },
+} as const;
+
+const refreshTokenBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["refreshToken"],
+  properties: {
+    refreshToken: { type: "string", minLength: 1, maxLength: 4096 },
+  },
+} as const;
+
 export async function authRoutes(app: FastifyInstance) {
-  // POST /auth/device-login
   app.post<{ Body: { deviceId: string } }>(
     "/auth/device-login",
     {
-      config: {
-        rateLimit: {
-          max: config.rateLimitAuthMax,
-          timeWindow: config.rateLimitAuthWindow,
+      config: authRateLimitConfig,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["deviceId"],
+          properties: {
+            deviceId: { type: "string", minLength: 8, maxLength: 256 },
+          },
         },
       },
     },
@@ -21,15 +41,21 @@ export async function authRoutes(app: FastifyInstance) {
     }
   );
 
-  // POST /auth/register (bind username + password)
   app.post<{ Body: { username: string; password: string; nickname?: string } }>(
     "/auth/register",
     {
       preHandler: [requireAuth],
-      config: {
-        rateLimit: {
-          max: config.rateLimitAuthMax,
-          timeWindow: config.rateLimitAuthWindow,
+      config: authRateLimitConfig,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["username", "password"],
+          properties: {
+            username: { type: "string", minLength: 2, maxLength: 20 },
+            password: { type: "string", minLength: 6, maxLength: 64 },
+            nickname: { type: "string", minLength: 1, maxLength: 20 },
+          },
         },
       },
     },
@@ -39,14 +65,19 @@ export async function authRoutes(app: FastifyInstance) {
     }
   );
 
-  // POST /auth/login
   app.post<{ Body: { username: string; password: string } }>(
     "/auth/login",
     {
-      config: {
-        rateLimit: {
-          max: config.rateLimitAuthMax,
-          timeWindow: config.rateLimitAuthWindow,
+      config: authRateLimitConfig,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["username", "password"],
+          properties: {
+            username: { type: "string", minLength: 1, maxLength: 64 },
+            password: { type: "string", minLength: 1, maxLength: 128 },
+          },
         },
       },
     },
@@ -56,16 +87,11 @@ export async function authRoutes(app: FastifyInstance) {
     }
   );
 
-  // POST /auth/refresh
   app.post<{ Body: { refreshToken: string } }>(
     "/auth/refresh",
     {
-      config: {
-        rateLimit: {
-          max: config.rateLimitAuthMax,
-          timeWindow: config.rateLimitAuthWindow,
-        },
-      },
+      config: authRateLimitConfig,
+      schema: { body: refreshTokenBodySchema },
     },
     async (request) => {
       const { refreshToken } = request.body;
@@ -73,17 +99,12 @@ export async function authRoutes(app: FastifyInstance) {
     }
   );
 
-  // POST /auth/logout
   app.post<{ Body: { refreshToken: string } }>(
     "/auth/logout",
     {
       preHandler: [requireAuth],
-      config: {
-        rateLimit: {
-          max: config.rateLimitAuthMax,
-          timeWindow: config.rateLimitAuthWindow,
-        },
-      },
+      config: authRateLimitConfig,
+      schema: { body: refreshTokenBodySchema },
     },
     async (request) => {
       const { refreshToken } = request.body;
@@ -92,15 +113,26 @@ export async function authRoutes(app: FastifyInstance) {
     }
   );
 
-  // GET /auth/me
   app.get("/auth/me", { preHandler: [requireAuth] }, async (request) => {
     return authService.getMe(request.user!.sub);
   });
 
-  // PUT /users/me
   app.put<{ Body: { nickname?: string; avatarSeed?: string } }>(
     "/users/me",
-    { preHandler: [requireAuth] },
+    {
+      preHandler: [requireAuth],
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          minProperties: 1,
+          properties: {
+            nickname: { type: "string", minLength: 1, maxLength: 20 },
+            avatarSeed: { type: "string", minLength: 1, maxLength: 128 },
+          },
+        },
+      },
+    },
     async (request) => {
       return authService.updateProfile(request.user!.sub, request.body);
     }

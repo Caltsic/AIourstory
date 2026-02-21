@@ -23,7 +23,6 @@ import {
   getDefaultPrompts,
   getActivePresetId,
   setActivePresetId,
-  getActivePrompts,
   listPresets,
   getPreset,
   savePreset,

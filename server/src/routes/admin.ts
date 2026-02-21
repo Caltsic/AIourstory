@@ -23,6 +23,25 @@ const adminRateLimitConfig = {
   },
 } as const;
 
+const reviewParamsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "uuid"],
+  properties: {
+    type: { type: "string", enum: ["prompt", "story"] },
+    uuid: { type: "string", minLength: 1, maxLength: 128 },
+  },
+} as const;
+
+const rejectBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reason"],
+  properties: {
+    reason: { type: "string", minLength: 1, maxLength: 500 },
+  },
+} as const;
+
 export async function adminRoutes(app: FastifyInstance) {
   app.get(
     "/admin/review/prompts",
@@ -94,7 +113,11 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { type: string; uuid: string } }>(
     "/admin/review/:type/:uuid/approve",
-    { preHandler: [requireAdmin], config: adminRateLimitConfig },
+    {
+      preHandler: [requireAdmin],
+      config: adminRateLimitConfig,
+      schema: { params: reviewParamsSchema },
+    },
     async (request) => {
       const { type, uuid } = request.params;
       const adminUser = await db
@@ -135,7 +158,11 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { type: string; uuid: string }; Body: { reason: string } }>(
     "/admin/review/:type/:uuid/reject",
-    { preHandler: [requireAdmin], config: adminRateLimitConfig },
+    {
+      preHandler: [requireAdmin],
+      config: adminRateLimitConfig,
+      schema: { params: reviewParamsSchema, body: rejectBodySchema },
+    },
     async (request) => {
       const { type, uuid } = request.params;
       const { reason } = request.body;
