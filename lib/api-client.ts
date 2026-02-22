@@ -1,4 +1,8 @@
-import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from "axios";
+import axios, {
+  AxiosError,
+  AxiosInstance,
+  InternalAxiosRequestConfig,
+} from "axios";
 
 interface AuthHooks {
   getAccessToken: () => Promise<string | null>;
@@ -11,7 +15,7 @@ let authHooks: AuthHooks = {
 };
 
 const DEFAULT_API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "https://8.137.71.118/v1";
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://8.137.71.118:3000/v1";
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const ALLOW_INSECURE_HTTP =
@@ -20,7 +24,9 @@ const ALLOW_INSECURE_HTTP =
 const INSECURE_HTTP_HOST_ALLOWLIST = new Set(["8.137.71.118"]);
 
 function isLocalHost(hostname: string) {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  );
 }
 
 function ensureSecureApiBaseUrl(url: string) {
@@ -32,7 +38,8 @@ function ensureSecureApiBaseUrl(url: string) {
   }
 
   const isAllowlistedInsecureHost =
-    parsed.protocol === "http:" && INSECURE_HTTP_HOST_ALLOWLIST.has(parsed.hostname);
+    parsed.protocol === "http:" &&
+    INSECURE_HTTP_HOST_ALLOWLIST.has(parsed.hostname);
 
   if (
     IS_PRODUCTION &&
@@ -105,7 +112,10 @@ apiClient.interceptors.response.use(
       throw error;
     }
 
-    if (original.url?.includes("/auth/refresh") || original.url?.includes("/auth/device-login")) {
+    if (
+      original.url?.includes("/auth/refresh") ||
+      original.url?.includes("/auth/device-login")
+    ) {
       throw error;
     }
 
@@ -121,12 +131,14 @@ apiClient.interceptors.response.use(
     }
 
     return apiClient(original);
-  }
+  },
 );
 
 export function parseApiError(err: unknown, fallback = "Request failed") {
   if (axios.isAxiosError(err)) {
-    const payload = err.response?.data as { error?: string; message?: string } | undefined;
+    const payload = err.response?.data as
+      | { error?: string; message?: string }
+      | undefined;
     return payload?.error || payload?.message || err.message || fallback;
   }
   if (err instanceof Error) return err.message;

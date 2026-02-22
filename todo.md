@@ -99,3 +99,19 @@
 - [x] `app/game.tsx`：掷骰 `better/exact/worse` 已纳入好感变化幅度加权，单回合限制 `[-3, +3]`。
 - [x] `app/game.tsx`：新增“好感变化”短时提示条，并在 Debug Context 显示最近结算摘要。
 - [x] `pnpm run check` 与 `pnpm test` 已通过。
+
+## 28. 本轮新增：IP 直连联调默认配置修复
+
+### 28.1 ToDo
+
+- [x] 将客户端默认 API 基址调整为 `http://8.137.71.118:3000/v1`。
+- [x] 在 `app.config.ts` 根据默认 API 地址自动启用 Android `usesCleartextTraffic`。
+- [x] 保留 `EXPO_PUBLIC_ALLOW_INSECURE_HTTP` 的显式覆盖能力。
+- [x] 回归验证 `pnpm run check`。
+
+### 28.2 Result
+
+- [x] `lib/api-client.ts`：默认回退基址已改为 IP HTTP 直连。
+- [x] `app.config.ts`：新增 `defaultApiBaseUrl` 与 `shouldEnableCleartextTraffic`，自动判断清流量放行。
+- [x] Android 构建在未配置环境变量时可直接用于 IP 直连联调。
+- [x] `pnpm run check` 已通过。

@@ -13,10 +13,30 @@ const allowInsecureHttp =
   process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === "1" ||
   process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === "true";
 
+const defaultApiBaseUrl =
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://8.137.71.118:3000/v1";
+
+function shouldEnableCleartextTraffic(url: string) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:") return false;
+    return (
+      parsed.hostname === "8.137.71.118" ||
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+const usesCleartextTraffic =
+  allowInsecureHttp || shouldEnableCleartextTraffic(defaultApiBaseUrl);
+
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
-  version: "1.0.14",
+  version: "1.0.15",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
@@ -93,7 +113,7 @@ const config: ExpoConfig = {
         android: {
           buildArchs: ["armeabi-v7a", "arm64-v8a"],
           minSdkVersion: 24,
-          usesCleartextTraffic: allowInsecureHttp,
+          usesCleartextTraffic,
         },
       },
     ],
