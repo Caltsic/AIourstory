@@ -18,17 +18,10 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import {
   createStory,
-  updateStory,
   type DifficultyLevel,
   type PaceLevel,
-  type StorySegment,
 } from "@/lib/story-store";
-import {
-  generateStory,
-  getLLMConfig,
-  randomizeStory,
-  PACE_MIN_CHARS,
-} from "@/lib/llm-client";
+import { getLLMConfig, randomizeStory, PACE_MIN_CHARS } from "@/lib/llm-client";
 
 const GENRES = [
   "奇幻冒险",
@@ -53,26 +46,6 @@ const DIFFICULTY_DICE_HINTS: Record<DifficultyLevel, string> = {
   噩梦: "噩梦：风险最高，错误决策会被明显放大。",
   无随机: "无随机：不掷骰，按剧情与选择直接结算。",
 };
-
-function ensureChoiceSegment(segments: StorySegment[]): StorySegment[] {
-  const hasChoice = segments.some(
-    (segment) =>
-      segment.type === "choice" &&
-      Array.isArray(segment.choices) &&
-      segment.choices.length > 0,
-  );
-
-  if (hasChoice) return segments;
-
-  return [
-    ...segments,
-    {
-      type: "choice",
-      text: "接下来你要怎么做？",
-      choices: ["继续当前行动", "先观察周围情况", "与关键人物对话"],
-    },
-  ];
-}
 
 export default function CreateStoryScreen() {
   const router = useRouter();
@@ -170,42 +143,6 @@ export default function CreateStoryScreen() {
         initialPacing,
         protagonistAppearance.trim(),
       );
-
-      const generated = await generateStory({
-        title: story.title,
-        premise: story.premise,
-        genre: story.genre,
-        protagonistName: story.protagonistName,
-        protagonistDescription: story.protagonistDescription,
-        protagonistAppearance: story.protagonistAppearance,
-        difficulty: story.difficulty,
-        pacing: story.currentPacing,
-      });
-
-      story.segments = ensureChoiceSegment(generated.segments || []);
-      story.currentIndex = 0;
-      story.currentPacing = generated.pacing;
-      story.lastGeneratedChars = generated.generatedChars;
-
-      if (generated.newCharacters && generated.newCharacters.length > 0) {
-        for (const npc of generated.newCharacters) {
-          if (story.characterCards.some((c) => c.name === npc.name)) continue;
-          story.characterCards.push({
-            id: `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-            name: npc.name,
-            hiddenName: npc.hiddenName?.trim() || "陌生人",
-            isNameRevealed: npc.knownToPlayer ?? true,
-            gender: npc.gender,
-            personality: npc.personality,
-            background: npc.background,
-            appearance: npc.appearance || "",
-            affinity: 0,
-            firstAppearance: 0,
-          });
-        }
-      }
-
-      await updateStory(story);
       router.replace({ pathname: "/game", params: { storyId: story.id } });
     } catch (err) {
       Alert.alert("创建失败", err instanceof Error ? err.message : "未知错误");
@@ -376,11 +313,14 @@ export default function CreateStoryScreen() {
               },
             ]}
           >
-            <Text style={[styles.difficultyHintText, { color: colors.foreground }]}>
+            <Text
+              style={[styles.difficultyHintText, { color: colors.foreground }]}
+            >
               {DIFFICULTY_DICE_HINTS[difficulty]}
             </Text>
             <Text style={[styles.difficultyRuleText, { color: colors.muted }]}>
-              掷骰规则：仅在高不确定尝试时触发；1-8 点，小于判定值=失败，等于=平局，大于=成功。
+              掷骰规则：仅在高不确定尝试时触发；1-8
+              点，小于判定值=失败，等于=平局，大于=成功。
             </Text>
           </View>
 

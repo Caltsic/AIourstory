@@ -78,8 +78,16 @@ const RANDOM_GENRE_POOL = [
   "都市情感",
 ] as const;
 
-function buildFallbackProtagonistAppearance(seedText = ""): string {
-  const text = seedText.trim();
+function buildFallbackProtagonistAppearance(params: {
+  genre?: string;
+  personality?: string;
+  premise?: string;
+}): string {
+  const genre = (params.genre || "").trim();
+  const personality = (params.personality || "").trim();
+  const premise = (params.premise || "").trim();
+  const seedText = `${genre}|${personality}|${premise}`;
+
   const hair = [
     "黑色短发",
     "深棕中长发",
@@ -95,18 +103,63 @@ function buildFallbackProtagonistAppearance(seedText = ""): string {
     "茶褐色眼睛",
   ];
   const body = ["身形修长", "肩背挺拔", "体态轻盈", "身材匀称", "动作利落"];
-  const outfit = [
-    "常穿深色风衣与长靴",
-    "常见学院外套与衬衫",
-    "偏好简洁夹克与工装裤",
-    "习惯轻便针织外套与长裤",
-    "常穿干练短款外套与皮靴",
+
+  const genreOutfitMap: Record<string, string[]> = {
+    奇幻冒险: [
+      "常穿旅行斗篷与轻甲护腕",
+      "常备皮革腰带与实用长靴",
+      "披着旧披风，随身挂着符纹小饰物",
+    ],
+    校园日常: [
+      "常见学院外套与整洁衬衫",
+      "偏好宽松针织衫与校裤",
+      "日常是简洁校服与帆布鞋",
+    ],
+    悬疑推理: [
+      "偏好深色风衣与便于行动的长裤",
+      "常穿低调夹克与防滑短靴",
+      "衣着克制，常备便携记事本与手套",
+    ],
+    古风仙侠: [
+      "身着素色长衫与束袖外袍",
+      "常着轻便道袍与云纹靴履",
+      "衣袂简雅，腰间悬挂玉饰与香囊",
+    ],
+    都市情感: [
+      "偏好简洁风衣与通勤长裤",
+      "常穿衬衫叠搭针织外套",
+      "服饰利落干净，配色克制",
+    ],
+  };
+
+  const personalityOutfitTweaks: Array<{ pattern: RegExp; tweak: string }> = [
+    { pattern: /(冷静|克制|理性|沉着)/, tweak: "配色偏冷，细节收敛" },
+    { pattern: /(活泼|外向|热情|开朗)/, tweak: "衣装点缀更明快" },
+    {
+      pattern: /(谨慎|敏锐|警惕|侦探)/,
+      tweak: "常把实用口袋与便携工具带在身上",
+    },
+    { pattern: /(温柔|善良|治愈)/, tweak: "整体气质柔和，线条更轻" },
   ];
+
   const pick = (arr: string[], salt: number) => {
-    const base = text.length + salt * 13 + (text.charCodeAt(0) || 17);
+    const code = seedText.charCodeAt(salt % Math.max(seedText.length, 1)) || 17;
+    const base = seedText.length * 7 + salt * 13 + code;
     return arr[Math.abs(base) % arr.length];
   };
-  return `${pick(hair, 1)}，${pick(eyes, 2)}，${pick(body, 3)}，${pick(outfit, 4)}。`;
+
+  const matchedOutfits = genreOutfitMap[genre] || [
+    "常穿简洁便于行动的日常服装",
+    "衣着朴素利落",
+    "偏好低调耐用的搭配",
+  ];
+  const baseOutfit = pick(matchedOutfits, 4);
+  const tweak = personalityOutfitTweaks.find((item) =>
+    item.pattern.test(personality),
+  )?.tweak;
+  const finalOutfit = tweak ? `${baseOutfit}，${tweak}` : baseOutfit;
+
+  return `${pick(hair, 1)}，${pick(eyes, 2)}，${pick(body, 3)}，${finalOutfit}。`;
 }
 
 export interface NewCharacterData {
@@ -134,10 +187,10 @@ export interface LLMResponse {
 }
 
 export const PACE_MIN_CHARS: Record<PaceLevel, number> = {
-  慵懒: 2200,
-  轻松: 1500,
-  紧张: 1100,
-  紧迫: 800,
+  慵懒: 1600,
+  轻松: 1200,
+  紧张: 900,
+  紧迫: 600,
 };
 
 const DEFAULT_PACE: PaceLevel = "轻松";
@@ -182,8 +235,7 @@ function buildPacingStructureConstraint(requiredPacing: PaceLevel): string {
   return "结构配额（推理向）：8-10 个 segments；至少 1 次硬后果（暴露/受伤/证物损失/关系破裂）并抛出倒计时悬念；至少 1 条关键线索与 1 个矛盾证词。";
 }
 
-export const HISTORY_CONTEXT_CHARS_LIMIT = 4500;
-const MAX_HISTORY_CHARS = HISTORY_CONTEXT_CHARS_LIMIT;
+export const HISTORY_CONTEXT_CHARS_LIMIT = 8000;
 const CONTINUE_REQUEST_TIMEOUT_MS = 90_000;
 const HIGH_UNCERTAINTY_ACTION_PATTERNS = [
   /尝试|试图/,
@@ -227,14 +279,6 @@ export function shouldRequireDiceCheck(
 
   // 默认保守：没有明显风险信号时，不触发判定。
   return false;
-}
-
-function clampHistoryForPrompt(history: string): string {
-  const normalized = history?.trim() ?? "";
-  if (normalized.length <= MAX_HISTORY_CHARS) {
-    return normalized;
-  }
-  return `[上下文过长，已截断为最近内容]\n${normalized.slice(-MAX_HISTORY_CHARS)}`;
 }
 
 function extractJsonPayload(content: string): string {
@@ -390,7 +434,9 @@ function parseJsonObjectWithRecovery(content: string): any {
     expandedCandidates.push(removeTrailingCommas(item));
     expandedCandidates.push(balanceJsonClosings(item));
     expandedCandidates.push(
-      balanceJsonClosings(removeTrailingCommas(replaceSingleQuotedJsonLiterals(item))),
+      balanceJsonClosings(
+        removeTrailingCommas(replaceSingleQuotedJsonLiterals(item)),
+      ),
     );
   }
 
@@ -637,7 +683,7 @@ export async function continueStory(
           },
           {
             role: "user",
-            content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${clampHistoryForPrompt(params.history)}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
+            content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${params.history.trim()}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
           },
         ],
         temperature: 0.7,
@@ -734,6 +780,57 @@ export async function summarizeStory(
 }
 
 /**
+ * 为摘要生成简短标题（用于事件标签展示）
+ */
+export async function generateSummaryTitle(params: {
+  summary: string;
+  recentTitles?: string[];
+}): Promise<string> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("请先在设置中配置 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+
+  const url = config.apiUrl.includes("/chat/completions")
+    ? config.apiUrl
+    : `${config.apiUrl}/chat/completions`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: "system", content: prompts.SUMMARY_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `请为下面这段剧情摘要生成一个不超过10个字的中文短标题，避免与近期标题重复。只输出标题本身，不要解释。\n\n[摘要]\n${params.summary.trim()}\n\n[近期标题]\n${(params.recentTitles ?? []).join("\n") || "（无）"}`,
+        },
+      ],
+      temperature: 0.2,
+      max_tokens: 30,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`标题生成失败: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const rawTitle: string = data.choices[0]?.message?.content?.trim() ?? "";
+  return rawTitle
+    .replace(/["“”'`]/g, "")
+    .trim()
+    .slice(0, 10);
+}
+
+/**
  * 随机生成故事设定
  */
 export async function randomizeStory(): Promise<RandomStoryConfig> {
@@ -788,7 +885,11 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
       genre: targetGenre,
       protagonistAppearance:
         parsed.protagonistAppearance?.trim() ||
-        buildFallbackProtagonistAppearance(parsed.protagonistDescription),
+        buildFallbackProtagonistAppearance({
+          genre: targetGenre,
+          personality: parsed.protagonistDescription,
+          premise: parsed.premise,
+        }),
     };
   } catch {
     throw new Error("AI 返回的设定格式不正确，请重试");
@@ -959,7 +1060,7 @@ export async function evaluateCustomAction(
   difficulty: DifficultyLevel,
   protagonistName?: string,
   protagonistDescription?: string,
-): Promise<number | null> {
+): Promise<number> {
   const config = await getLLMConfig();
 
   if (!config.apiKey) {
@@ -967,9 +1068,6 @@ export async function evaluateCustomAction(
   }
 
   const contextSnippet = history.slice(-220);
-  if (!shouldRequireDiceCheck(action, contextSnippet)) {
-    return null;
-  }
 
   const prompts = await getActivePrompts();
 
@@ -988,7 +1086,7 @@ export async function evaluateCustomAction(
         { role: "system", content: prompts.EVALUATE_ACTION_SYSTEM_PROMPT },
         {
           role: "user",
-            content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n请先判断该行动是否属于“高不确定尝试行动”：若不是，请输出 null；若是，再输出 1-8 的判定值。只输出 null 或数字，不要输出解释。`,
+          content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n该行动为玩家主动输入的自定义行动，必须给出 1-8 的判定值，不允许输出 null。只输出数字，不要解释。`,
         },
       ],
       temperature: 0.3,
@@ -996,23 +1094,30 @@ export async function evaluateCustomAction(
     }),
   });
 
+  const fallbackByDifficulty: Record<DifficultyLevel, number> = {
+    简单: 3,
+    普通: 4,
+    困难: 5,
+    噩梦: 6,
+    无随机: 4,
+  };
+  const fallbackValue = shouldRequireDiceCheck(action, contextSnippet)
+    ? Math.min(8, fallbackByDifficulty[difficulty] + 1)
+    : fallbackByDifficulty[difficulty];
+
   if (!response.ok) {
-    return 4; // fallback to medium difficulty
+    return fallbackValue;
   }
 
   const data = await response.json();
   const content: string = data.choices[0]?.message?.content?.trim() ?? "4";
   const normalized = content.toLowerCase();
-  if (
-    normalized === "null" ||
-    normalized.includes("不需要") ||
-    normalized.includes("无需")
-  ) {
-    return null;
+  if (normalized === "null") {
+    return fallbackValue;
   }
   const match = content.match(/[1-8]/);
   const value = match ? parseInt(match[0], 10) : Number.NaN;
-  return Number.isNaN(value) ? 4 : Math.max(1, Math.min(8, value));
+  return Number.isNaN(value) ? fallbackValue : Math.max(1, Math.min(8, value));
 }
 
 /**
