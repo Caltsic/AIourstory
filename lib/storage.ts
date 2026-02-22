@@ -10,6 +10,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 const API_KEY_KEY = "user_api_key";
 const API_URL_KEY = "user_api_url";
 const MODEL_KEY = "user_model";
+const TEMPERATURE_KEY = "user_temperature";
 
 const IMAGE_API_KEY_KEY = "user_image_api_key";
 const IMAGE_API_URL_KEY = "user_image_api_url";
@@ -20,6 +21,13 @@ export interface StorageConfig {
   apiKey: string | null;
   apiUrl: string;
   model: string;
+  temperature: number;
+}
+
+function normalizeTemperature(value: string | null | undefined): number {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) return 0.7;
+  return Math.max(0, Math.min(2, parsed));
 }
 
 export interface ImageStorageConfig {
@@ -38,22 +46,26 @@ export async function getStorageConfig(): Promise<StorageConfig> {
     const apiKey = await AsyncStorage.getItem(API_KEY_KEY);
     const apiUrl = await AsyncStorage.getItem(API_URL_KEY);
     const model = await AsyncStorage.getItem(MODEL_KEY);
+    const temperature = await AsyncStorage.getItem(TEMPERATURE_KEY);
 
     return {
       apiKey: apiKey || null,
       apiUrl: apiUrl || "https://api.openai.com/v1/chat/completions",
       model: model || "gpt-4o-mini",
+      temperature: normalizeTemperature(temperature),
     };
   } else {
     // 原生环境使用 SecureStore
     const apiKey = await SecureStore.getItemAsync(API_KEY_KEY);
     const apiUrl = await SecureStore.getItemAsync(API_URL_KEY);
     const model = await SecureStore.getItemAsync(MODEL_KEY);
+    const temperature = await SecureStore.getItemAsync(TEMPERATURE_KEY);
 
     return {
       apiKey: apiKey || null,
       apiUrl: apiUrl || "https://api.openai.com/v1/chat/completions",
       model: model || "gpt-4o-mini",
+      temperature: normalizeTemperature(temperature),
     };
   }
 }
@@ -65,17 +77,24 @@ export async function saveStorageConfig(config: {
   apiKey: string;
   apiUrl: string;
   model: string;
+  temperature?: number;
 }): Promise<void> {
+  const finalTemperature = Math.max(0, Math.min(2, config.temperature ?? 0.7));
   if (Platform.OS === "web") {
     // Web 环境使用 AsyncStorage
     await AsyncStorage.setItem(API_KEY_KEY, config.apiKey);
     await AsyncStorage.setItem(API_URL_KEY, config.apiUrl);
     await AsyncStorage.setItem(MODEL_KEY, config.model);
+    await AsyncStorage.setItem(TEMPERATURE_KEY, finalTemperature.toString());
   } else {
     // 原生环境使用 SecureStore
     await SecureStore.setItemAsync(API_KEY_KEY, config.apiKey);
     await SecureStore.setItemAsync(API_URL_KEY, config.apiUrl);
     await SecureStore.setItemAsync(MODEL_KEY, config.model);
+    await SecureStore.setItemAsync(
+      TEMPERATURE_KEY,
+      finalTemperature.toString(),
+    );
   }
 }
 
@@ -139,10 +158,12 @@ export async function clearStorageConfig(): Promise<void> {
     await AsyncStorage.removeItem(API_KEY_KEY);
     await AsyncStorage.removeItem(API_URL_KEY);
     await AsyncStorage.removeItem(MODEL_KEY);
+    await AsyncStorage.removeItem(TEMPERATURE_KEY);
   } else {
     // 原生环境使用 SecureStore
     await SecureStore.deleteItemAsync(API_KEY_KEY);
     await SecureStore.deleteItemAsync(API_URL_KEY);
     await SecureStore.deleteItemAsync(MODEL_KEY);
+    await SecureStore.deleteItemAsync(TEMPERATURE_KEY);
   }
 }

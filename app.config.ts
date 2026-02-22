@@ -36,7 +36,7 @@ const usesCleartextTraffic =
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
-  version: "1.0.15",
+  version: "1.0.16",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,

@@ -31,6 +31,7 @@ import {
   type StorySegment,
   type CharacterCard,
   type DiceResult,
+  type DifficultyLevel,
   type ImagePromptRecord,
   type StorySummaryRecord,
 } from "@/lib/story-store";
@@ -42,6 +43,7 @@ import {
   generateImagePrompt,
   getLLMConfig,
   evaluateCustomAction,
+  evaluateInitialAffinities,
   generateCharacterPortraitPrompt,
   HISTORY_CONTEXT_CHARS_LIMIT,
   PACE_MIN_CHARS,
@@ -467,6 +469,9 @@ export default function GameScreen() {
       router.back();
       return;
     }
+    if (applyAutoRevealByStableRealName(s)) {
+      await updateStory(s);
+    }
     setStory(s);
     syncImageQueueSnapshot(s);
     if (s.backgroundImageUri) {
@@ -531,6 +536,8 @@ export default function GameScreen() {
           s,
           result.newCharacters,
         );
+        await applyAIInitialAffinityForNewCharacters(s, result.newCharacters);
+        applyAutoRevealByStableRealName(s);
         try {
           const fullHistoryText = buildFullHistoryContext(s.segments);
           const summaryResult = await summarizeStory({
@@ -575,6 +582,26 @@ export default function GameScreen() {
   function getCharacterDisplayName(card: CharacterCard): string {
     if (card.isNameRevealed) return card.name;
     return card.hiddenName?.trim() || "陌生人";
+  }
+
+  function findCharacterCardBySegmentName(name?: string): CharacterCard | null {
+    if (!name || !story) return null;
+    const normalized = name.trim();
+    if (!normalized) return null;
+    return (
+      story.characterCards.find(
+        (card) =>
+          card.name.trim() === normalized ||
+          card.hiddenName.trim() === normalized,
+      ) || null
+    );
+  }
+
+  function getDisplayedSegmentCharacterName(name?: string): string {
+    if (!name) return "";
+    const matchedCard = findCharacterCardBySegmentName(name);
+    if (!matchedCard) return name;
+    return getCharacterDisplayName(matchedCard);
   }
 
   function addSummaryRecord(
@@ -696,6 +723,75 @@ export default function GameScreen() {
     return createdCardIds;
   }
 
+  function applyAutoRevealByStableRealName(s: Story): boolean {
+    const recentDialogues = s.segments
+      .slice(-18)
+      .filter((segment) => segment.type === "dialogue" && segment.character)
+      .map((segment) => (segment.character || "").trim())
+      .filter(Boolean);
+
+    if (recentDialogues.length === 0) return false;
+
+    let changed = false;
+    for (const card of s.characterCards) {
+      if (card.isNameRevealed) continue;
+      const realName = card.name?.trim();
+      if (!realName) continue;
+      const hitCount = recentDialogues.filter(
+        (name) => name === realName,
+      ).length;
+      if (hitCount >= 2) {
+        card.isNameRevealed = true;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  async function applyAIInitialAffinityForNewCharacters(
+    s: Story,
+    newCharacters?: {
+      name: string;
+      hiddenName?: string;
+      knownToPlayer?: boolean;
+      gender: string;
+      personality: string;
+      background: string;
+      appearance?: string;
+    }[],
+  ) {
+    if (!newCharacters || newCharacters.length === 0) return;
+    try {
+      const affinityMap = await evaluateInitialAffinities({
+        title: s.title,
+        premise: s.premise,
+        genre: s.genre,
+        protagonistName: s.protagonistName,
+        protagonistDescription: s.protagonistDescription,
+        protagonistAppearance: s.protagonistAppearance,
+        characters: newCharacters.map((c) => ({
+          name: c.name,
+          gender: c.gender,
+          personality: c.personality,
+          background: c.background,
+          appearance: c.appearance,
+        })),
+      });
+
+      for (const incoming of newCharacters) {
+        const affinity = affinityMap[incoming.name];
+        if (typeof affinity !== "number" || Number.isNaN(affinity)) continue;
+        const matched = s.characterCards.find(
+          (card) => card.name === incoming.name,
+        );
+        if (!matched) continue;
+        matched.affinity = Math.max(0, Math.min(100, Math.round(affinity)));
+      }
+    } catch (error) {
+      console.warn("Initial affinity AI evaluation failed:", error);
+    }
+  }
+
   function buildImageContextFromSegments(segments: StorySegment[]): string {
     return segments
       .map((segment) => {
@@ -722,9 +818,7 @@ export default function GameScreen() {
     if (name === story.protagonistName) {
       return story.protagonistPortraitUri || undefined;
     }
-    const card = story.characterCards.find(
-      (c) => c.name === name || c.hiddenName === name,
-    );
+    const card = findCharacterCardBySegmentName(name);
     return card?.portraitUri;
   }
 
@@ -769,23 +863,46 @@ export default function GameScreen() {
 
     const hasPositive = positive.test(text);
     const hasNegative = negative.test(text);
+    const inferredPolarity: 1 | -1 =
+      hasPositive && !hasNegative
+        ? 1
+        : !hasPositive && hasNegative
+          ? -1
+          : diceOutcome === "worse"
+            ? -1
+            : 1;
 
-    if (hasPositive && hasNegative) {
-      return {
-        changes: [],
-        toastText: "好感变化：本次无变化",
-        debugText: "正负语义冲突，跳过结算",
-      };
-    }
-    if (!hasPositive && !hasNegative) {
-      return {
-        changes: [],
-        toastText: "好感变化：本次无变化",
-        debugText: "未命中正负关键词",
-      };
-    }
+    const difficultyMagnitudeMap: Record<
+      DifficultyLevel,
+      {
+        positive: { strong: number; weak: number };
+        negative: { strong: number; weak: number };
+      }
+    > = {
+      简单: {
+        positive: { strong: 12, weak: 10 },
+        negative: { strong: 2, weak: 1 },
+      },
+      普通: {
+        positive: { strong: 8, weak: 6 },
+        negative: { strong: 4, weak: 3 },
+      },
+      困难: {
+        positive: { strong: 5, weak: 3 },
+        negative: { strong: 7, weak: 6 },
+      },
+      噩梦: {
+        positive: { strong: 2, weak: 1 },
+        negative: { strong: 10, weak: 8 },
+      },
+      无随机: {
+        positive: { strong: 7, weak: 5 },
+        negative: { strong: 4, weak: 3 },
+      },
+    };
+    const magnitudePreset = difficultyMagnitudeMap[story.difficulty];
 
-    const polarity: 1 | -1 = hasPositive ? 1 : -1;
+    // 每次互动最多影响 2 名关联角色，确保“有互动就有变化”且反馈稳定。
     const reasonPriority: Array<AffinityChange["reason"]> = [
       "mention",
       "recent-dialogue",
@@ -850,18 +967,24 @@ export default function GameScreen() {
     const changes: AffinityChange[] = [];
     for (const { card, reason } of candidates) {
       const before = Math.max(0, Math.min(100, Math.round(card.affinity || 0)));
+      const isStrong = reason === "mention";
       let magnitude =
-        polarity > 0 ? (before >= 75 ? 1 : 2) : before >= 70 ? 2 : 1;
+        inferredPolarity > 0
+          ? isStrong
+            ? magnitudePreset.positive.strong
+            : magnitudePreset.positive.weak
+          : isStrong
+            ? magnitudePreset.negative.strong
+            : magnitudePreset.negative.weak;
 
       if (diceOutcome === "better") {
-        magnitude += 1;
+        magnitude += inferredPolarity > 0 ? 1 : -1;
       } else if (diceOutcome === "worse") {
-        magnitude = polarity > 0 ? Math.max(0, magnitude - 1) : magnitude + 1;
+        magnitude += inferredPolarity > 0 ? -1 : 1;
       }
+      magnitude = Math.max(1, magnitude);
 
-      let delta = polarity * magnitude;
-      delta = Math.max(-3, Math.min(3, delta));
-      if (delta === 0) continue;
+      const delta = inferredPolarity * magnitude;
 
       const after = Math.max(0, Math.min(100, before + delta));
       if (after === before) continue;
@@ -902,7 +1025,7 @@ export default function GameScreen() {
     return {
       changes,
       toastText: `好感变化：${changeText}`,
-      debugText: `影响${changes.length}人（点名${reasonCount.mention}/近期对话${reasonCount["recent-dialogue"]}/摘要${reasonCount.summary}）`,
+      debugText: `影响${changes.length}人（难度${story.difficulty}，方向${inferredPolarity > 0 ? "增" : "减"}，点名${reasonCount.mention}/近期对话${reasonCount["recent-dialogue"]}/摘要${reasonCount.summary}）`,
     };
   }
 
@@ -1023,22 +1146,19 @@ export default function GameScreen() {
     );
     if (collapsedPrefixCount <= 0) return;
 
-    const compactSegment: StorySegment = {
-      type: "narration",
-      text: `[历史压缩摘要] ${resolved.summary}`,
-    };
     const tailSegments = latest.segments.slice(collapsedPrefixCount);
-    latest.segments = [compactSegment, ...tailSegments];
+    // 历史压缩只用于上下文，不向玩家可见剧情注入摘要段。
+    latest.segments = tailSegments;
     latest.currentIndex =
       latest.currentIndex < collapsedPrefixCount
         ? 0
-        : latest.currentIndex - collapsedPrefixCount + 1;
+        : latest.currentIndex - collapsedPrefixCount;
     latest.characterCards = latest.characterCards.map((card) => ({
       ...card,
       firstAppearance:
         card.firstAppearance < collapsedPrefixCount
           ? 0
-          : card.firstAppearance - collapsedPrefixCount + 1,
+          : card.firstAppearance - collapsedPrefixCount,
     }));
 
     latest.storySummary = resolved.summary;
@@ -1902,6 +2022,8 @@ export default function GameScreen() {
         story,
         result.newCharacters,
       );
+      await applyAIInitialAffinityForNewCharacters(story, result.newCharacters);
+      applyAutoRevealByStableRealName(story);
 
       // Increment choice counter
       story.choiceCount = (story.choiceCount ?? 0) + 1;
@@ -2247,7 +2369,9 @@ export default function GameScreen() {
                           { color: colors.primary },
                         ]}
                       >
-                        {currentSegment.character}
+                        {getDisplayedSegmentCharacterName(
+                          currentSegment.character,
+                        )}
                       </Text>
                     </View>
                   </Animated.View>
@@ -2550,7 +2674,6 @@ export default function GameScreen() {
             activeOpacity={1}
             onPress={() => {
               setShowCustomInputModal(false);
-              setCustomInput("");
             }}
             style={{ flex: 1 }}
           />
@@ -2587,7 +2710,6 @@ export default function GameScreen() {
               <TouchableOpacity
                 onPress={() => {
                   setShowCustomInputModal(false);
-                  setCustomInput("");
                 }}
                 style={[
                   styles.customModalCancel,

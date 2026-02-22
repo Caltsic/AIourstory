@@ -16,12 +16,14 @@ import { useRouter } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { ThemePresets } from "@/constants/theme";
 import { useColors } from "@/hooks/use-colors";
 import { useAuth } from "@/lib/auth-provider";
 import { clearAppLogs, formatLogLines, getAppLogs, logInfo } from "@/lib/app-logger";
 import { setTestDiceValue } from "@/lib/dice";
 import { getImageConfig, saveImageConfig } from "@/lib/image-client";
 import { getLLMConfig, saveLLMConfig, testAPIKey } from "@/lib/llm-client";
+import { useThemeContext } from "@/lib/theme-provider";
 
 const API_PRESETS = [
   { name: "OpenAI", apiUrl: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini" },
@@ -40,18 +42,44 @@ const API_PRESETS = [
     apiUrl: "https://openrouter.ai/api/v1/chat/completions",
     model: "anthropic/claude-3-haiku",
   },
-  { name: "自定义", apiUrl: "", model: "" },
+  { name: "Custom", apiUrl: "", model: "" },
+];
+
+const IMAGE_API_PRESETS = [
+  {
+    name: "火山 (ARK)",
+    apiUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    model: "doubao-seedream-3-0-t2i-250415",
+  },
+  {
+    name: "千问 (DashScope)",
+    apiUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen-image",
+  },
+  {
+    name: "千帆 (Baidu)",
+    apiUrl: "https://qianfan.baidubce.com/v2",
+    model: "ernie-vilg-v2",
+  },
+  {
+    name: "Grok (xAI)",
+    apiUrl: "https://api.x.ai/v1",
+    model: "grok-2-image",
+  },
+  { name: "Custom", apiUrl: "", model: "" },
 ];
 
 export default function SettingsScreen() {
   const colors = useColors();
   const router = useRouter();
   const auth = useAuth();
+  const { themePreset, setThemePreset } = useThemeContext();
   const appVersion = Constants.expoConfig?.version ?? "1.0.0";
 
   const [apiKey, setApiKey] = useState("");
   const [apiUrl, setApiUrl] = useState("");
   const [model, setModel] = useState("");
+  const [temperature, setTemperature] = useState("0.7");
   const [selectedPreset, setSelectedPreset] = useState(API_PRESETS.length - 1);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -60,6 +88,10 @@ export default function SettingsScreen() {
   const [imageApiUrl, setImageApiUrl] = useState("");
   const [imageModel, setImageModel] = useState("");
   const [imageSize, setImageSize] = useState("");
+  const [selectedImagePreset, setSelectedImagePreset] = useState(
+    IMAGE_API_PRESETS.length - 1,
+  );
+  const [showImagePresetModal, setShowImagePresetModal] = useState(false);
 
   const [testerKey, setTesterKey] = useState("");
   const [testerActivated, setTesterActivated] = useState(false);
@@ -68,6 +100,7 @@ export default function SettingsScreen() {
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [logsText, setLogsText] = useState("");
   const [logsLoading, setLogsLoading] = useState(false);
+  const [showThemePresetModal, setShowThemePresetModal] = useState(false);
 
   useEffect(() => {
     void loadConfig();
@@ -79,6 +112,7 @@ export default function SettingsScreen() {
       setApiKey(config.apiKey || "");
       setApiUrl(config.apiUrl);
       setModel(config.model);
+      setTemperature(String(config.temperature ?? 0.7));
 
       const presetIndex = API_PRESETS.findIndex(
         (item) => item.apiUrl === config.apiUrl && item.model === config.model
@@ -92,6 +126,15 @@ export default function SettingsScreen() {
       setImageApiUrl(imageConfig.imageApiUrl);
       setImageModel(imageConfig.imageModel);
       setImageSize(imageConfig.imageSize || "");
+
+      const imagePresetIndex = IMAGE_API_PRESETS.findIndex(
+        (item) =>
+          item.apiUrl === imageConfig.imageApiUrl &&
+          item.model === imageConfig.imageModel,
+      );
+      if (imagePresetIndex >= 0) {
+        setSelectedImagePreset(imagePresetIndex);
+      }
     } catch (error) {
       console.error("Failed to load settings:", error);
     }
@@ -99,12 +142,22 @@ export default function SettingsScreen() {
 
   function handleSelectPreset(index: number) {
     const preset = API_PRESETS[index];
-    if (preset.name !== "自定义") {
+    if (preset.name !== "Custom") {
       setApiUrl(preset.apiUrl);
       setModel(preset.model);
     }
     setSelectedPreset(index);
     setShowPresetModal(false);
+  }
+
+  function handleSelectImagePreset(index: number) {
+    const preset = IMAGE_API_PRESETS[index];
+    if (preset.name !== "Custom") {
+      setImageApiUrl(preset.apiUrl);
+      setImageModel(preset.model);
+    }
+    setSelectedImagePreset(index);
+    setShowImagePresetModal(false);
   }
 
   async function handleSaveApiConfig() {
@@ -117,7 +170,13 @@ export default function SettingsScreen() {
       return;
     }
     if (!model.trim()) {
-      Alert.alert("错误", "请输入模型名称");
+      Alert.alert("Error", "Please enter model name");
+      return;
+    }
+
+    const parsedTemperature = Number(temperature.trim());
+    if (Number.isNaN(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) {
+      Alert.alert("错误", "温度需在 0 到 2 之间");
       return;
     }
 
@@ -126,9 +185,10 @@ export default function SettingsScreen() {
         apiKey: apiKey.trim(),
         apiUrl: apiUrl.trim(),
         model: model.trim(),
+        temperature: parsedTemperature,
       });
       logInfo("settings", "AI config saved");
-      Alert.alert("成功", "AI 配置已保存");
+      Alert.alert("Success", "AI config saved");
     } catch (error) {
       console.error("save ai config failed:", error);
       Alert.alert("错误", "保存配置失败");
@@ -141,10 +201,21 @@ export default function SettingsScreen() {
       return;
     }
 
+    const parsedTemperature = Number(temperature.trim());
+    if (Number.isNaN(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) {
+      Alert.alert("错误", "温度需在 0 到 2 之间");
+      return;
+    }
+
     setTesting(true);
     try {
-      const ok = await testAPIKey(apiKey.trim(), apiUrl.trim(), model.trim());
-      Alert.alert("测试结果", ok ? "连接成功" : "连接失败，请检查配置");
+      const ok = await testAPIKey(
+        apiKey.trim(),
+        apiUrl.trim(),
+        model.trim(),
+        parsedTemperature,
+      );
+      Alert.alert("Test Result", ok ? "Connection successful" : "Connection failed, please check config");
     } catch (error) {
       console.error("test ai config failed:", error);
       Alert.alert("错误", "测试失败");
@@ -155,7 +226,7 @@ export default function SettingsScreen() {
 
   async function handleSaveImageConfig() {
     if (!imageApiUrl.trim() || !imageModel.trim()) {
-      Alert.alert("错误", "请填写图片 API URL 和模型");
+      Alert.alert("Error", "Please fill image API URL and model");
       return;
     }
 
@@ -167,7 +238,7 @@ export default function SettingsScreen() {
         imageSize: imageSize.trim(),
       });
       logInfo("settings", "Image config saved");
-      Alert.alert("成功", "图片配置已保存");
+      Alert.alert("Success", "Image config saved");
     } catch (error) {
       console.error("save image config failed:", error);
       Alert.alert("错误", "保存图片配置失败");
@@ -202,7 +273,7 @@ export default function SettingsScreen() {
         onPress: async () => {
           await clearAppLogs();
           setLogsText("暂无日志");
-          Alert.alert("完成", "日志已清空");
+          Alert.alert("Done", "Logs cleared");
         },
       },
     ]);
@@ -217,7 +288,7 @@ export default function SettingsScreen() {
   }
 
   async function handleClearData() {
-    Alert.alert("清除所有数据", "这会删除所有本地故事存档，且无法撤销。", [
+    Alert.alert("Clear all data", "This will delete all local story saves and cannot be undone.", [
       { text: "取消", style: "cancel" },
       {
         text: "清除",
@@ -226,7 +297,7 @@ export default function SettingsScreen() {
           const keys = await AsyncStorage.getAllKeys();
           const storyKeys = keys.filter((k) => k.startsWith("story_") || k === "stories_index");
           await AsyncStorage.multiRemove(storyKeys);
-          Alert.alert("完成", "本地故事数据已清除");
+          Alert.alert("Done", "Local story data cleared");
         },
       },
     ]);
@@ -234,19 +305,19 @@ export default function SettingsScreen() {
 
   function handleTesterVerify() {
     if (testerKey !== "1234567") {
-      Alert.alert("错误", "测试密钥不正确");
+      Alert.alert("Error", "Tester key is invalid");
       return;
     }
     setTesterActivated(true);
     setTestDiceValue(fixedDiceValue);
-    Alert.alert("成功", "测试模式已开启");
+    Alert.alert("Success", "Tester mode enabled");
   }
 
   function handleTesterDisable() {
     setTesterActivated(false);
     setTesterKey("");
     setTestDiceValue(null);
-    Alert.alert("提示", "测试模式已关闭");
+    Alert.alert("Notice", "Tester mode disabled");
   }
 
   return (
@@ -291,7 +362,7 @@ export default function SettingsScreen() {
                     style={[styles.secondaryButton, { borderColor: colors.border }]}
                   >
                     <IconSymbol name="xmark.circle" size={18} color={colors.foreground} />
-                    <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>退出</Text>
+                    <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>Logout</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -317,6 +388,24 @@ export default function SettingsScreen() {
               <Text style={[styles.dangerButtonText, { color: colors.error }]}>清空日志</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>Theme</Text>
+          <TouchableOpacity
+            onPress={() => setShowThemePresetModal(true)}
+            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
+            <View style={styles.cardRow}>
+              <Text style={[styles.cardLabel, { color: colors.foreground }]}>UI Theme</Text>
+              <View style={styles.cardValueRow}>
+                <Text style={[styles.cardValue, { color: colors.muted }]}>
+                  {ThemePresets.find((item) => item.id === themePreset)?.label || "-"}
+                </Text>
+                <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+              </View>
+            </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
@@ -366,7 +455,7 @@ export default function SettingsScreen() {
             />
           </View>
 
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
             <View style={styles.inputRow}>
               <Text style={[styles.inputLabel, { color: colors.foreground }]}>模型</Text>
             </View>
@@ -378,6 +467,22 @@ export default function SettingsScreen() {
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
               autoCorrect={false}
+            />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>温度 (0-2)</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={temperature}
+              onChangeText={setTemperature}
+              placeholder="0.7"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="decimal-pad"
             />
           </View>
 
@@ -405,7 +510,22 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.muted }]}>图片生成配置</Text>
 
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <TouchableOpacity
+            onPress={() => setShowImagePresetModal(true)}
+            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
+            <View style={styles.cardRow}>
+              <Text style={[styles.cardLabel, { color: colors.foreground }]}>预设</Text>
+              <View style={styles.cardValueRow}>
+                <Text style={[styles.cardValue, { color: colors.muted }]}>
+                  {IMAGE_API_PRESETS[selectedImagePreset].name}
+                </Text>
+                <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+              </View>
+            </View>
+          </TouchableOpacity>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
             <View style={styles.inputRow}>
               <Text style={[styles.inputLabel, { color: colors.foreground }]}>API Key</Text>
             </View>
@@ -473,10 +593,15 @@ export default function SettingsScreen() {
             <IconSymbol name="checkmark" size={18} color="#fff" />
             <Text style={styles.primaryButtonText}>保存图片配置</Text>
           </TouchableOpacity>
+
+          {selectedImagePreset === 1 ? (
+            <Text style={[styles.helperText, { color: colors.muted }]}>
+              千问提示：`qwen-image` 支持同步/异步；万相系列通常为异步任务，应用会自动轮询结果。            </Text>
+          ) : null}
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>测试员模式</Text>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>Tester Mode</Text>
           {!testerActivated ? (
             <>
               <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -550,7 +675,7 @@ export default function SettingsScreen() {
             style={[styles.dangerButton, { borderColor: colors.error }]}
           >
             <IconSymbol name="trash.fill" size={18} color={colors.error} />
-            <Text style={[styles.dangerButtonText, { color: colors.error }]}>清除所有故事数据</Text>
+            <Text style={[styles.dangerButtonText, { color: colors.error }]}>Clear all story data</Text>
           </TouchableOpacity>
         </View>
 
@@ -610,6 +735,95 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </Modal>
 
+      <Modal
+        visible={showImagePresetModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowImagePresetModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowImagePresetModal(false)}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}> 
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>选择图片 API 预设</Text>
+            {IMAGE_API_PRESETS.map((preset, index) => (
+              <TouchableOpacity
+                key={preset.name}
+                style={[
+                  styles.presetItem,
+                  selectedImagePreset === index && { backgroundColor: `${colors.primary}20` },
+                ]}
+                onPress={() => handleSelectImagePreset(index)}
+              >
+                <Text
+                  style={[
+                    styles.presetName,
+                    { color: colors.foreground },
+                    selectedImagePreset === index && { color: colors.primary },
+                  ]}
+                >
+                  {preset.name}
+                </Text>
+                {selectedImagePreset === index ? (
+                  <IconSymbol name="checkmark" size={20} color={colors.primary} />
+                ) : null}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showThemePresetModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowThemePresetModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowThemePresetModal(false)}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Select UI Theme</Text>
+            {ThemePresets.map((preset) => (
+              <TouchableOpacity
+                key={preset.id}
+                style={[
+                  styles.presetItem,
+                  themePreset === preset.id && { backgroundColor: `${colors.primary}20` },
+                ]}
+                onPress={() => {
+                  setThemePreset(preset.id);
+                  setShowThemePresetModal(false);
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={[
+                      styles.presetName,
+                      { color: colors.foreground },
+                      themePreset === preset.id && { color: colors.primary },
+                    ]}
+                  >
+                    {preset.label}
+                  </Text>
+                  {preset.description ? (
+                    <Text style={[styles.helperText, { color: colors.muted, marginTop: 2 }]}>
+                      {preset.description}
+                    </Text>
+                  ) : null}
+                </View>
+                {themePreset === preset.id ? (
+                  <IconSymbol name="checkmark" size={20} color={colors.primary} />
+                ) : null}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
       <Modal visible={showLogsModal} animationType="slide" onRequestClose={() => setShowLogsModal(false)}>
         <ScreenContainer>
           <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -829,4 +1043,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
+  helperText: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 18,
+  },
 });
+
+
+

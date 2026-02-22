@@ -4,9 +4,17 @@
  */
 export {
   Colors,
+  DEFAULT_THEME_PRESET_ID,
   Fonts,
+  ThemePresets,
+  ThemePresetPalettes,
+  ThemePresetIds,
   SchemeColors,
   ThemeColors,
   type ColorScheme,
+  type ThemePresetId,
   type ThemeColorPalette,
+  getSchemeColors,
+  getThemeColors,
+  isThemePresetId,
 } from "@/lib/_core/theme";

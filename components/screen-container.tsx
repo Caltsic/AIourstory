@@ -1,6 +1,8 @@
 import { View, type ViewProps } from "react-native";
 import { SafeAreaView, type Edge } from "react-native-safe-area-context";
 
+import { SentientTrailOverlay } from "@/components/sentient-trail-overlay";
+import { useThemeContext } from "@/lib/theme-provider";
 import { cn } from "@/lib/utils";
 
 export interface ScreenContainerProps extends ViewProps {
@@ -47,6 +49,9 @@ export function ScreenContainer({
   style,
   ...props
 }: ScreenContainerProps) {
+  const { themePreset } = useThemeContext();
+  const showMimicSentientTrail = themePreset === "mimic-sentient-trail";
+
   return (
     <View
       className={cn(
@@ -56,6 +61,7 @@ export function ScreenContainer({
       )}
       {...props}
     >
+      {showMimicSentientTrail ? <SentientTrailOverlay /> : null}
       <SafeAreaView
         edges={edges}
         className={cn("flex-1", safeAreaClassName)}

@@ -209,3 +209,103 @@ This file tracks reproducible bugs and fix records.
 5. Files:
    - `app/game.tsx`
    - `lib/llm-client.ts`
+
+### [BUG-20260222-008] 历史压缩摘要出现在剧情中且角色已知名显示不同步
+
+- Status: fixed
+- Priority: P1
+- Platform: Android / iOS / Web
+- Version: 1.0.15
+- Found at: 2026-02-22
+- Repro steps:
+
+1. 长剧情触发历史压缩后继续游玩。
+2. 观察剧情区出现大段 `[历史压缩摘要]` 文本，自动推进卡顿。
+3. 角色在后续剧情中已知真名后，对话区仍显示旧称呼。
+
+- Actual result:
+
+1. 历史压缩结果被直接插入可见剧情段。
+2. 对话区角色名直接使用段落原始角色字段，未统一走角色卡显示规则。
+
+- Expected result:
+
+1. 历史压缩仅用于 AI 上下文与总结记录，不在可见剧情展示。
+2. 角色知晓真名后，对话区显示应同步切换为真名。
+
+- Logs/Screenshots: none
+- Workaround: none
+- Fix notes:
+
+1. 压缩回写时移除可见摘要段注入，改为仅保留尾部未压缩段并维护索引。
+2. 新增基于角色卡的段落角色名映射函数，对话区统一显示映射名。
+3. Files:
+   - `app/game.tsx`
+
+### [BUG-20260222-009] 输入体验问题与真名揭示滞后
+
+- Status: fixed
+- Priority: P1
+- Platform: Android / iOS
+- Version: 1.0.15
+- Found at: 2026-02-22
+- Repro steps:
+
+1. 创建故事页编辑“故事开场”，唤起输入法后输入框被遮挡。
+2. 游戏内打开“自定义行动”输入到一半关闭弹窗，再次打开草稿丢失。
+3. 剧情里角色持续使用真名，但对话区仍显示旧别名。
+
+- Actual result:
+
+1. 输入框可见性受键盘影响，编辑体验差。
+2. 自定义草稿关闭即清空，造成重复输入。
+3. `isNameRevealed` 对 `knownToPlayer` 依赖过强，自动揭示不及时。
+
+- Expected result:
+
+1. 输入法弹起时“故事开场”应保持可见。
+2. 自定义弹窗关闭后草稿应保留，提交成功才清空。
+3. 真名稳定出现后应自动切换为真名显示。
+
+- Logs/Screenshots: none
+- Workaround: none
+- Fix notes:
+
+1. `create-story` 增强键盘避让与焦点滚动逻辑。
+2. `game` 自定义输入弹窗取消自动清空，仅确认提交后清空。
+3. `game` 新增“真名稳定命中>=2 次自动揭示”逻辑，并在对话区使用角色卡映射名。
+4. Files:
+   - `app/create-story.tsx`
+   - `app/game.tsx`
+
+### [BUG-20260222-010] 新角色初始好感度过于单一（长期为0）
+
+- Status: fixed
+- Priority: P1
+- Platform: Android / iOS / Web
+- Version: 1.0.15
+- Found at: 2026-02-22
+- Repro steps:
+
+1. 多次推进剧情触发新角色入场。
+2. 查看角色卡，初始好感多数为 0，关系差异不明显。
+
+- Actual result:
+
+1. 初始好感主要依赖本地规则，关系细节不足，沉浸感弱。
+
+- Expected result:
+
+1. 应由 AI 结合剧情背景与人物关系评估初始好感。
+2. 亲属/同伴/敌对等关系应呈现明显差异。
+
+- Logs/Screenshots: none
+- Workaround: none
+- Fix notes:
+
+1. 新增 `evaluateInitialAffinities`，批量评估新角色初始好感（0-100）。
+2. 新角色入场后先用本地规则兜底，再由 AI 结果覆盖。
+3. AI 调用失败时保留兜底值并不中断剧情流程。
+4. Files:
+   - `lib/llm-client.ts`
+   - `app/game.tsx`

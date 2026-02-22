@@ -172,6 +172,22 @@ export interface NewCharacterData {
   appearance?: string;
 }
 
+export interface EvaluateInitialAffinityParams {
+  title: string;
+  premise: string;
+  genre: string;
+  protagonistName: string;
+  protagonistDescription: string;
+  protagonistAppearance?: string;
+  characters: Array<{
+    name: string;
+    gender: string;
+    personality: string;
+    background: string;
+    appearance?: string;
+  }>;
+}
+
 export interface SummaryResult {
   title: string;
   summary: string;
@@ -192,6 +208,14 @@ export const PACE_MIN_CHARS: Record<PaceLevel, number> = {
   紧张: 900,
   紧迫: 600,
 };
+
+const DEFAULT_LLM_TEMPERATURE = 0.7;
+
+function resolveConfiguredTemperature(config: LLMConfig): number {
+  const value = Number(config.temperature);
+  if (Number.isNaN(value)) return DEFAULT_LLM_TEMPERATURE;
+  return Math.max(0, Math.min(2, value));
+}
 
 const DEFAULT_PACE: PaceLevel = "轻松";
 
@@ -219,7 +243,9 @@ function countSegmentsChars(segments: StorySegment[]): number {
 
 function buildPacingConstraint(requiredPacing: PaceLevel): string {
   const minCharsTarget = PACE_MIN_CHARS[requiredPacing];
-  return `本轮节奏固定为「${requiredPacing}」。你必须输出 pacing="${requiredPacing}"，不得改成其他值。\n字符数规则（统计 segments 的 text 与 choices 合计）：目标值 >= ${minCharsTarget}。请确保内容充实，至少明显高于目标值，避免贴线。`;
+  const lowerBound = Math.max(200, minCharsTarget - 100);
+  const upperBound = minCharsTarget + 100;
+  return `本轮节奏固定为「${requiredPacing}」。你必须输出 pacing="${requiredPacing}"，不得改成其他值。\n字符数规则（统计 segments 的 text 与 choices 合计）：目标值为 ${minCharsTarget}。请将总字符数控制在目标附近的范围（建议 ${lowerBound}~${upperBound}），在保证信息密度的前提下避免明显超写。`;
 }
 
 function buildPacingStructureConstraint(requiredPacing: PaceLevel): string {
@@ -532,6 +558,7 @@ export async function saveLLMConfig(config: {
   apiKey: string;
   apiUrl: string;
   model: string;
+  temperature?: number;
 }): Promise<void> {
   await saveStorageConfig(config);
 }
@@ -552,6 +579,7 @@ export async function testAPIKey(
   apiKey: string,
   apiUrl: string,
   model: string,
+  temperature = DEFAULT_LLM_TEMPERATURE,
 ): Promise<boolean> {
   try {
     // 如果 apiUrl 已经包含了完整路径，直接使用；否则添加 /chat/completions
@@ -572,6 +600,7 @@ export async function testAPIKey(
             content: "Test",
           },
         ],
+        temperature: Math.max(0, Math.min(2, temperature)),
         max_tokens: 10,
       }),
     });
@@ -602,6 +631,7 @@ export async function generateStory(
 
   const prompts = await getActivePrompts();
   const requiredPacing = normalizePaceLevel(params.pacing ?? DEFAULT_PACE);
+  const temperature = resolveConfiguredTemperature(config);
 
   // 如果 apiUrl 已经包含了完整路径，直接使用；否则添加 /chat/completions
   const url = config.apiUrl.includes("/chat/completions")
@@ -625,7 +655,7 @@ export async function generateStory(
           content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ""}${params.protagonistAppearance ? `，主角外貌：${params.protagonistAppearance}` : ""}。\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请生成剧情片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
         },
       ],
-      temperature: 0.7,
+      temperature,
       max_tokens: 4000,
     }),
   });
@@ -655,6 +685,7 @@ export async function continueStory(
 
   const prompts = await getActivePrompts();
   const requiredPacing = normalizePaceLevel(params.pacing ?? DEFAULT_PACE);
+  const temperature = resolveConfiguredTemperature(config);
 
   // 如果 apiUrl 已经包含了完整路径，直接使用；否则添加 /chat/completions
   const url = config.apiUrl.includes("/chat/completions")
@@ -686,7 +717,7 @@ export async function continueStory(
             content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${params.history.trim()}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
           },
         ],
-        temperature: 0.7,
+        temperature,
         max_tokens: 4000,
       }),
       signal: controller.signal,
@@ -725,6 +756,7 @@ export async function summarizeStory(
   }
 
   const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
 
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
@@ -746,7 +778,7 @@ export async function summarizeStory(
             : params.history,
         },
       ],
-      temperature: 0.3,
+      temperature,
       max_tokens: 500,
     }),
   });
@@ -793,6 +825,7 @@ export async function generateSummaryTitle(params: {
   }
 
   const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
 
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
@@ -812,7 +845,7 @@ export async function generateSummaryTitle(params: {
           content: `请为下面这段剧情摘要生成一个不超过10个字的中文短标题，避免与近期标题重复。只输出标题本身，不要解释。\n\n[摘要]\n${params.summary.trim()}\n\n[近期标题]\n${(params.recentTitles ?? []).join("\n") || "（无）"}`,
         },
       ],
-      temperature: 0.2,
+      temperature,
       max_tokens: 30,
     }),
   });
@@ -841,6 +874,7 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
   }
 
   const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
   const randomBucket = Math.floor(Math.random() * 5) + 1;
   const targetGenre = RANDOM_GENRE_POOL[randomBucket - 1];
 
@@ -862,7 +896,7 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
           content: `请基于题材「${targetGenre}」生成一套故事设定。必须使用该题材，不要改成其他题材。默认避免硬科幻术语与生僻专业词，语言自然口语化。`,
         },
       ],
-      temperature: 1.25,
+      temperature,
       max_tokens: 600,
     }),
   });
@@ -907,6 +941,7 @@ export async function generateImagePrompt(summary: string): Promise<string> {
   }
 
   const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
 
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
@@ -923,7 +958,7 @@ export async function generateImagePrompt(summary: string): Promise<string> {
         { role: "system", content: prompts.IMAGE_PROMPT_SYSTEM_PROMPT },
         { role: "user", content: `剧情摘要：\n${summary}` },
       ],
-      temperature: 0.7,
+      temperature,
       max_tokens: 200,
     }),
   });
@@ -1070,6 +1105,7 @@ export async function evaluateCustomAction(
   const contextSnippet = history.slice(-220);
 
   const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
 
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
@@ -1089,7 +1125,7 @@ export async function evaluateCustomAction(
           content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n该行动为玩家主动输入的自定义行动，必须给出 1-8 的判定值，不允许输出 null。只输出数字，不要解释。`,
         },
       ],
-      temperature: 0.3,
+      temperature,
       max_tokens: 10,
     }),
   });
@@ -1121,6 +1157,81 @@ export async function evaluateCustomAction(
 }
 
 /**
+ * 评估新角色初始好感度（0-100）
+ */
+export async function evaluateInitialAffinities(
+  params: EvaluateInitialAffinityParams,
+): Promise<Record<string, number>> {
+  if (!params.characters.length) return {};
+
+  const config = await getLLMConfig();
+  if (!config.apiKey) {
+    throw new Error("请先在设置中配置 API Key");
+  }
+
+  const temperature = resolveConfiguredTemperature(config);
+  const url = config.apiUrl.includes("/chat/completions")
+    ? config.apiUrl
+    : `${config.apiUrl}/chat/completions`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是剧情关系评估器。请根据主角与出场角色的关系亲疏，返回每个角色初始好感度（0-100）。仅输出 JSON。",
+        },
+        {
+          role: "user",
+          content: `故事标题：${params.title}\n题材：${params.genre}\n开场：${params.premise}\n主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n请为以下角色评估初始好感度。输出格式：{ "affinities": [ { "name": "角色名", "affinity": 0-100 } ] }\n\n角色列表：\n${params.characters
+            .map(
+              (c, i) =>
+                `${i + 1}. ${c.name}｜性别:${c.gender || "未知"}｜性格:${c.personality || "未知"}｜背景:${c.background || "未知"}｜外貌:${c.appearance || "未提供"}`,
+            )
+            .join("\n")}`,
+        },
+      ],
+      temperature,
+      max_tokens: 300,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`初始好感评估失败: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content?.trim() ?? "";
+  if (!content) return {};
+
+  try {
+    const parsed = parseJsonObjectWithRecovery(content) as {
+      affinities?: Array<{ name?: string; affinity?: number }>;
+    };
+    const list = Array.isArray(parsed.affinities) ? parsed.affinities : [];
+    const mapped: Record<string, number> = {};
+    for (const item of list) {
+      const name = (item.name || "").trim();
+      if (!name) continue;
+      const affinity = Math.round(Number(item.affinity));
+      if (Number.isNaN(affinity)) continue;
+      mapped[name] = Math.max(0, Math.min(100, affinity));
+    }
+    return mapped;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * 根据角色信息生成角色立绘的英文提示词
  */
 export async function generateCharacterPortraitPrompt(
@@ -1133,6 +1244,7 @@ export async function generateCharacterPortraitPrompt(
   }
 
   const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
 
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
@@ -1152,7 +1264,7 @@ export async function generateCharacterPortraitPrompt(
           content: `角色信息：\n姓名：${character.name}\n性别：${character.gender}\n外貌：${character.appearance || "未提供"}\n性格：${character.personality}\n背景：${character.background}`,
         },
       ],
-      temperature: 0.7,
+      temperature,
       max_tokens: 300,
     }),
   });

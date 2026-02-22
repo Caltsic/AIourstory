@@ -13,3 +13,4 @@
 ## 网站说明
 - 网站名称是aioursyory.cn
 - 后端是backend.aiourstory.cn
+- 网站备案尚在审核，目 前采用IP直连方式

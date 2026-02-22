@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -62,6 +62,7 @@ export default function CreateStoryScreen() {
   const [initialPacing, setInitialPacing] = useState<PaceLevel>("轻松");
   const [creating, setCreating] = useState(false);
   const [randomizing, setRandomizing] = useState(false);
+  const scrollRef = useRef<ScrollView | null>(null);
 
   useEffect(() => {
     if (typeof params.title === "string") setTitle(params.title);
@@ -171,7 +172,8 @@ export default function CreateStoryScreen() {
     <ScreenContainer edges={["top", "bottom", "left", "right"]}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       >
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <TouchableOpacity
@@ -210,8 +212,13 @@ export default function CreateStoryScreen() {
         </View>
 
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={
+            Platform.OS === "ios" ? "interactive" : "on-drag"
+          }
+          automaticallyAdjustKeyboardInsets
         >
           <LabeledInput
             label="故事标题"
@@ -365,6 +372,11 @@ export default function CreateStoryScreen() {
             colors={colors}
             multiline
             minHeight={140}
+            onFocus={() => {
+              setTimeout(() => {
+                scrollRef.current?.scrollToEnd({ animated: true });
+              }, 90);
+            }}
             helperText="示例：暴雨夜，城市博物馆的古钟失窃，你在案发现场发现一枚不属于馆方的旧钥匙。"
           />
 
@@ -395,6 +407,7 @@ function LabeledInput({
   multiline = false,
   minHeight,
   helperText,
+  onFocus,
 }: {
   label: string;
   value: string;
@@ -403,6 +416,7 @@ function LabeledInput({
   multiline?: boolean;
   minHeight?: number;
   helperText?: string;
+  onFocus?: () => void;
 }) {
   return (
     <View style={styles.section}>
@@ -427,6 +441,7 @@ function LabeledInput({
         ]}
         multiline={multiline}
         placeholderTextColor={colors.muted}
+        onFocus={onFocus}
       />
     </View>
   );
