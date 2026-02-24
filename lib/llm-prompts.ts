@@ -200,6 +200,27 @@ export const CHARACTER_PORTRAIT_SYSTEM_PROMPT = `你是一个专业的 AI 绘画
 3. 包含：面部特征、发型发色、瞳色、体型、服饰细节、姿态表情、光影氛围。
 4. 末尾附加： character portrait, anime style, detailed face, masterpiece, high res, 8k, cinematic lighting, concept art, upper body`;
 
+export const EVALUATE_CONTINUATION_SYSTEM_PROMPT = `你是剧情续写评估器。你将收到“本轮续写前上下文”和“本轮新生成片段”。
+
+请严格输出 JSON：
+{
+  "score": 0-100,
+  "strengths": ["优点1", "优点2"],
+  "issues": ["问题1", "问题2"],
+  "advice": "下一轮续写的具体改进建议（80-200字）"
+}
+
+评估重点：
+1) 连贯性：与前文角色设定、时间线、因果是否一致。
+2) 选择后果：玩家选择是否产生了明确且可感知的后果。
+3) 信息密度：是否推进了线索、冲突、目标，而非空转。
+4) 可玩性：结尾选项是否具备策略分化与可执行性。
+
+要求：
+- 建议必须具体可执行，禁止空话。
+- 若整体质量高，issues 可为空数组，但 advice 仍需给出“继续保持的具体做法”。
+- 只输出 JSON，不要额外解释。`;
+
 // ─── Context Builders ────────────────────────────────────────────────
 
 export function buildDifficultyContext(difficulty: DifficultyLevel): string {

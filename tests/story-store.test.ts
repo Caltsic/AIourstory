@@ -28,6 +28,7 @@ import {
   updateStory,
   deleteStory,
   buildHistoryContext,
+  buildHistoryContextBounded,
   type StorySegment,
 } from "../lib/story-store";
 
@@ -43,6 +44,7 @@ describe("story-store", () => {
       "这是一个测试开头",
       "奇幻冒险",
       "主角",
+      "未知",
       "测试简介",
     );
     expect(story.id).toBeTruthy();
@@ -52,6 +54,8 @@ describe("story-store", () => {
     expect(story.segments).toEqual([]);
     expect(story.currentIndex).toBe(0);
     expect(story.imageGenerationStatus).toBe("idle");
+    expect(story.storyGenerationStatus).toBe("idle");
+    expect(story.lastStoryGenerationError).toBe("");
     expect(story.imagePromptHistory).toEqual([]);
     expect(story.summaryHistory).toEqual([]);
     expect(story.createdAt).toBeGreaterThan(0);
@@ -84,6 +88,8 @@ describe("story-store", () => {
     expect(migrated!.imageGenerationStatus).toBe("idle");
     expect(migrated!.imagePromptHistory).toEqual([]);
     expect(migrated!.summaryHistory).toEqual([]);
+    expect(migrated!.protagonistGender).toBe("未知");
+    expect(migrated!.storyGenerationStatus).toBe("idle");
   });
 
   it("retrieves a story by id", async () => {
@@ -92,6 +98,7 @@ describe("story-store", () => {
       "开头A",
       "校园日常",
       "主角A",
+      "未知",
       "",
     );
     const retrieved = await getStory(created.id);
@@ -106,10 +113,24 @@ describe("story-store", () => {
   });
 
   it("lists all stories sorted by updatedAt desc", async () => {
-    const s1 = await createStory("故事1", "开头1", "奇幻冒险", "主角1", "");
+    const s1 = await createStory(
+      "故事1",
+      "开头1",
+      "奇幻冒险",
+      "主角1",
+      "未知",
+      "",
+    );
     // Wait a bit so s2 has a later timestamp
     await new Promise((r) => setTimeout(r, 10));
-    const s2 = await createStory("故事2", "开头2", "悬疑推理", "主角2", "");
+    const s2 = await createStory(
+      "故事2",
+      "开头2",
+      "悬疑推理",
+      "主角2",
+      "未知",
+      "",
+    );
 
     const all = await getAllStories();
     expect(all.length).toBe(2);
@@ -119,14 +140,28 @@ describe("story-store", () => {
   });
 
   it("deletes a story", async () => {
-    const story = await createStory("待删除", "开头", "科幻未来", "主角", "");
+    const story = await createStory(
+      "待删除",
+      "开头",
+      "科幻未来",
+      "主角",
+      "未知",
+      "",
+    );
     await deleteStory(story.id);
     const result = await getStory(story.id);
     expect(result).toBeNull();
   });
 
   it("updates story segments and history context", async () => {
-    const story = await createStory("更新测试", "开头", "古风仙侠", "主角", "");
+    const story = await createStory(
+      "更新测试",
+      "开头",
+      "古风仙侠",
+      "主角",
+      "未知",
+      "",
+    );
     story.segments = [
       { type: "narration", text: "夜幕降临，月光洒在古老的庭院中。" },
       { type: "dialogue", character: "林月", text: "你来了。" },
@@ -154,16 +189,52 @@ describe("buildHistoryContext", () => {
   });
 
   it("uses summary and limits recent segments", () => {
-    const segments: StorySegment[] = Array.from({ length: 50 }, (_, i) => ({
+    const segments: StorySegment[] = Array.from({ length: 150 }, (_, i) => ({
       type: "narration" as const,
       text: `段落${i}`,
     }));
     const context = buildHistoryContext(segments, "这是剧情摘要");
     expect(context).toContain("[剧情摘要]");
     expect(context).toContain("这是剧情摘要");
-    // With summary, only last 15 segments are included
-    expect(context).toContain("段落49");
-    expect(context).toContain("段落35");
-    expect(context).not.toContain("段落34");
+    // With summary, only last 100 segments are included
+    expect(context).toContain("段落149");
+    expect(context).toContain("段落50");
+    expect(context).toContain("段落100");
+    expect(context).not.toContain("段落49");
+  });
+});
+
+describe("buildHistoryContextBounded", () => {
+  it("enforces hard char cap with summary", () => {
+    const segments: StorySegment[] = Array.from({ length: 30 }, (_, i) => ({
+      type: "narration",
+      text: `第${i}段：` + "剧情".repeat(30),
+    }));
+    const result = buildHistoryContextBounded(segments, "这是摘要".repeat(60), {
+      maxRecentSegments: 20,
+      maxChars: 420,
+    });
+
+    expect(result.context.length).toBeLessThanOrEqual(420);
+    expect(result.context).toContain("[剧情摘要]");
+    expect(result.context).toContain("[最近剧情]");
+    expect(result.recentSegmentsIncluded).toBeGreaterThan(0);
+  });
+
+  it("respects maxRecentSegments without summary", () => {
+    const segments: StorySegment[] = Array.from({ length: 12 }, (_, i) => ({
+      type: "narration",
+      text: `段落${i}`,
+    }));
+
+    const result = buildHistoryContextBounded(segments, "", {
+      maxRecentSegments: 5,
+      maxChars: 5000,
+    });
+
+    expect(result.recentSegmentsIncluded).toBe(5);
+    expect(result.context).toContain("段落11");
+    expect(result.context).toContain("段落7");
+    expect(result.context).not.toContain("段落6");
   });
 });

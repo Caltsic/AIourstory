@@ -33,7 +33,7 @@ export const promptPresets = sqliteTable(
     description: text("description").notNull().default(""),
     promptsJson: text("prompts_json").notNull(),
     tags: text("tags").notNull().default("[]"),
-    status: text("status", { enum: ["pending", "approved", "rejected"] })
+    status: text("status", { enum: ["pending", "approved", "rejected", "unpublished"] })
       .notNull()
       .default("pending"),
     rejectReason: text("reject_reason"),
@@ -69,7 +69,7 @@ export const storySettings = sqliteTable(
     initialPacing: text("initial_pacing").notNull().default("轻松"),
     extraDescription: text("extra_description").notNull().default(""),
     tags: text("tags").notNull().default("[]"),
-    status: text("status", { enum: ["pending", "approved", "rejected"] })
+    status: text("status", { enum: ["pending", "approved", "rejected", "unpublished"] })
       .notNull()
       .default("pending"),
     rejectReason: text("reject_reason"),

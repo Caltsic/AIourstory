@@ -11,6 +11,10 @@ const API_KEY_KEY = "user_api_key";
 const API_URL_KEY = "user_api_url";
 const MODEL_KEY = "user_model";
 const TEMPERATURE_KEY = "user_temperature";
+const EVAL_API_KEY_KEY = "user_eval_api_key";
+const EVAL_API_URL_KEY = "user_eval_api_url";
+const EVAL_MODEL_KEY = "user_eval_model";
+const AUTO_BG_EVERY_CHOICES_KEY = "user_auto_bg_every_choices";
 
 const IMAGE_API_KEY_KEY = "user_image_api_key";
 const IMAGE_API_URL_KEY = "user_image_api_url";
@@ -22,12 +26,25 @@ export interface StorageConfig {
   apiUrl: string;
   model: string;
   temperature: number;
+  evalApiKey: string | null;
+  evalApiUrl: string;
+  evalModel: string;
+  autoBackgroundEveryChoices: number;
 }
 
 function normalizeTemperature(value: string | null | undefined): number {
   const parsed = Number(value);
   if (Number.isNaN(parsed)) return 0.7;
   return Math.max(0, Math.min(2, parsed));
+}
+
+function normalizePositiveInt(
+  value: string | null | undefined,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(value || "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }
 
 export interface ImageStorageConfig {
@@ -47,12 +64,23 @@ export async function getStorageConfig(): Promise<StorageConfig> {
     const apiUrl = await AsyncStorage.getItem(API_URL_KEY);
     const model = await AsyncStorage.getItem(MODEL_KEY);
     const temperature = await AsyncStorage.getItem(TEMPERATURE_KEY);
+    const evalApiKey = await AsyncStorage.getItem(EVAL_API_KEY_KEY);
+    const evalApiUrl = await AsyncStorage.getItem(EVAL_API_URL_KEY);
+    const evalModel = await AsyncStorage.getItem(EVAL_MODEL_KEY);
+    const autoBgEveryChoices = await AsyncStorage.getItem(
+      AUTO_BG_EVERY_CHOICES_KEY,
+    );
 
     return {
       apiKey: apiKey || null,
       apiUrl: apiUrl || "https://api.openai.com/v1/chat/completions",
       model: model || "gpt-4o-mini",
       temperature: normalizeTemperature(temperature),
+      evalApiKey: evalApiKey || null,
+      evalApiUrl:
+        evalApiUrl || apiUrl || "https://api.openai.com/v1/chat/completions",
+      evalModel: evalModel || model || "gpt-4o-mini",
+      autoBackgroundEveryChoices: normalizePositiveInt(autoBgEveryChoices, 3),
     };
   } else {
     // 原生环境使用 SecureStore
@@ -60,12 +88,23 @@ export async function getStorageConfig(): Promise<StorageConfig> {
     const apiUrl = await SecureStore.getItemAsync(API_URL_KEY);
     const model = await SecureStore.getItemAsync(MODEL_KEY);
     const temperature = await SecureStore.getItemAsync(TEMPERATURE_KEY);
+    const evalApiKey = await SecureStore.getItemAsync(EVAL_API_KEY_KEY);
+    const evalApiUrl = await SecureStore.getItemAsync(EVAL_API_URL_KEY);
+    const evalModel = await SecureStore.getItemAsync(EVAL_MODEL_KEY);
+    const autoBgEveryChoices = await SecureStore.getItemAsync(
+      AUTO_BG_EVERY_CHOICES_KEY,
+    );
 
     return {
       apiKey: apiKey || null,
       apiUrl: apiUrl || "https://api.openai.com/v1/chat/completions",
       model: model || "gpt-4o-mini",
       temperature: normalizeTemperature(temperature),
+      evalApiKey: evalApiKey || null,
+      evalApiUrl:
+        evalApiUrl || apiUrl || "https://api.openai.com/v1/chat/completions",
+      evalModel: evalModel || model || "gpt-4o-mini",
+      autoBackgroundEveryChoices: normalizePositiveInt(autoBgEveryChoices, 3),
     };
   }
 }
@@ -78,14 +117,29 @@ export async function saveStorageConfig(config: {
   apiUrl: string;
   model: string;
   temperature?: number;
+  evalApiKey?: string;
+  evalApiUrl?: string;
+  evalModel?: string;
+  autoBackgroundEveryChoices?: number;
 }): Promise<void> {
   const finalTemperature = Math.max(0, Math.min(2, config.temperature ?? 0.7));
+  const finalAutoBgEveryChoices = Math.max(
+    1,
+    Math.floor(config.autoBackgroundEveryChoices ?? 3),
+  );
   if (Platform.OS === "web") {
     // Web 环境使用 AsyncStorage
     await AsyncStorage.setItem(API_KEY_KEY, config.apiKey);
     await AsyncStorage.setItem(API_URL_KEY, config.apiUrl);
     await AsyncStorage.setItem(MODEL_KEY, config.model);
     await AsyncStorage.setItem(TEMPERATURE_KEY, finalTemperature.toString());
+    await AsyncStorage.setItem(EVAL_API_KEY_KEY, config.evalApiKey ?? "");
+    await AsyncStorage.setItem(EVAL_API_URL_KEY, config.evalApiUrl ?? "");
+    await AsyncStorage.setItem(EVAL_MODEL_KEY, config.evalModel ?? "");
+    await AsyncStorage.setItem(
+      AUTO_BG_EVERY_CHOICES_KEY,
+      finalAutoBgEveryChoices.toString(),
+    );
   } else {
     // 原生环境使用 SecureStore
     await SecureStore.setItemAsync(API_KEY_KEY, config.apiKey);
@@ -94,6 +148,13 @@ export async function saveStorageConfig(config: {
     await SecureStore.setItemAsync(
       TEMPERATURE_KEY,
       finalTemperature.toString(),
+    );
+    await SecureStore.setItemAsync(EVAL_API_KEY_KEY, config.evalApiKey ?? "");
+    await SecureStore.setItemAsync(EVAL_API_URL_KEY, config.evalApiUrl ?? "");
+    await SecureStore.setItemAsync(EVAL_MODEL_KEY, config.evalModel ?? "");
+    await SecureStore.setItemAsync(
+      AUTO_BG_EVERY_CHOICES_KEY,
+      finalAutoBgEveryChoices.toString(),
     );
   }
 }
@@ -159,11 +220,19 @@ export async function clearStorageConfig(): Promise<void> {
     await AsyncStorage.removeItem(API_URL_KEY);
     await AsyncStorage.removeItem(MODEL_KEY);
     await AsyncStorage.removeItem(TEMPERATURE_KEY);
+    await AsyncStorage.removeItem(EVAL_API_KEY_KEY);
+    await AsyncStorage.removeItem(EVAL_API_URL_KEY);
+    await AsyncStorage.removeItem(EVAL_MODEL_KEY);
+    await AsyncStorage.removeItem(AUTO_BG_EVERY_CHOICES_KEY);
   } else {
     // 原生环境使用 SecureStore
     await SecureStore.deleteItemAsync(API_KEY_KEY);
     await SecureStore.deleteItemAsync(API_URL_KEY);
     await SecureStore.deleteItemAsync(MODEL_KEY);
     await SecureStore.deleteItemAsync(TEMPERATURE_KEY);
+    await SecureStore.deleteItemAsync(EVAL_API_KEY_KEY);
+    await SecureStore.deleteItemAsync(EVAL_API_URL_KEY);
+    await SecureStore.deleteItemAsync(EVAL_MODEL_KEY);
+    await SecureStore.deleteItemAsync(AUTO_BG_EVERY_CHOICES_KEY);
   }
 }

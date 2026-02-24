@@ -37,9 +37,32 @@ const promptUpdateBodySchema = {
   },
 } as const;
 
-async function getCurrentUserId(userUuid?: string): Promise<number | undefined> {
+const promptListQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    page: { type: "string", pattern: "^[1-9]\\d*$" },
+    limit: { type: "string", pattern: "^[1-9]\\d*$" },
+    sort: { type: "string", enum: ["newest", "popular", "downloads"] },
+    search: { type: "string", minLength: 1, maxLength: 100 },
+    tags: { type: "string", minLength: 1, maxLength: 500 },
+  },
+} as const;
+
+function parsePositiveInt(input: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(input || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function getCurrentUserId(
+  userUuid?: string,
+): Promise<number | undefined> {
   if (!userUuid) return undefined;
-  const user = await db.select({ id: users.id }).from(users).where(eq(users.uuid, userUuid)).get();
+  const user = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.uuid, userUuid))
+    .get();
   return user?.id;
 }
 
@@ -52,29 +75,33 @@ export async function promptRoutes(app: FastifyInstance) {
       search?: string;
       tags?: string;
     };
-  }>("/prompts", async (request) => {
-    let currentUserId: number | undefined;
-    const authHeader = request.headers.authorization;
-    if (authHeader?.startsWith("Bearer ")) {
-      try {
-        const { verifyToken } = await import("../utils/jwt.js");
-        const payload = await verifyToken(authHeader.slice(7));
-        currentUserId = await getCurrentUserId(payload.sub!);
-      } catch {
-        currentUserId = undefined;
+  }>(
+    "/prompts",
+    { schema: { querystring: promptListQuerySchema } },
+    async (request) => {
+      let currentUserId: number | undefined;
+      const authHeader = request.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        try {
+          const { verifyToken } = await import("../utils/jwt.js");
+          const payload = await verifyToken(authHeader.slice(7));
+          currentUserId = await getCurrentUserId(payload.sub!);
+        } catch {
+          currentUserId = undefined;
+        }
       }
-    }
 
-    const { page, limit, sort, search, tags } = request.query;
-    return promptService.list({
-      page: parseInt(page || "1", 10),
-      limit: Math.min(parseInt(limit || "20", 10), 50),
-      sort: (sort as "newest" | "popular" | "downloads") || "newest",
-      search: search || undefined,
-      tags: tags ? tags.split(",") : undefined,
-      currentUserId,
-    });
-  });
+      const { page, limit, sort, search, tags } = request.query;
+      return promptService.list({
+        page: parsePositiveInt(page, 1),
+        limit: Math.min(parsePositiveInt(limit, 20), 50),
+        sort: (sort as "newest" | "popular" | "downloads") || "newest",
+        search: search || undefined,
+        tags: tags ? tags.split(",") : undefined,
+        currentUserId,
+      });
+    },
+  );
 
   app.get("/prompts/mine", { preHandler: [requireAuth] }, async (request) => {
     return promptService.listMine(request.user!.sub);
@@ -96,24 +123,38 @@ export async function promptRoutes(app: FastifyInstance) {
   });
 
   app.post<{
-    Body: { name: string; description: string; promptsJson: string; tags: string[] };
+    Body: {
+      name: string;
+      description: string;
+      promptsJson: string;
+      tags: string[];
+    };
   }>(
     "/prompts",
     { preHandler: [requireBound], schema: { body: promptCreateBodySchema } },
     async (request) => {
       return promptService.create(request.user!.sub, request.body);
-    }
+    },
   );
 
   app.put<{
     Params: { uuid: string };
-    Body: { name?: string; description?: string; promptsJson?: string; tags?: string[] };
+    Body: {
+      name?: string;
+      description?: string;
+      promptsJson?: string;
+      tags?: string[];
+    };
   }>(
     "/prompts/:uuid",
     { preHandler: [requireBound], schema: { body: promptUpdateBodySchema } },
     async (request) => {
-      return promptService.update(request.params.uuid, request.user!.sub, request.body);
-    }
+      return promptService.update(
+        request.params.uuid,
+        request.user!.sub,
+        request.body,
+      );
+    },
   );
 
   app.delete<{ Params: { uuid: string } }>(
@@ -121,18 +162,20 @@ export async function promptRoutes(app: FastifyInstance) {
     { preHandler: [requireBound] },
     async (request) => {
       return promptService.remove(request.params.uuid, request.user!.sub);
-    }
+    },
   );
 
   app.post<{ Params: { uuid: string } }>(
     "/prompts/:uuid/like",
     { preHandler: [requireAuth] },
-    async (request) => promptService.toggleLike(request.params.uuid, request.user!.sub)
+    async (request) =>
+      promptService.toggleLike(request.params.uuid, request.user!.sub),
   );
 
   app.post<{ Params: { uuid: string } }>(
     "/prompts/:uuid/download",
     { preHandler: [requireAuth] },
-    async (request) => promptService.recordDownload(request.params.uuid, request.user!.sub)
+    async (request) =>
+      promptService.recordDownload(request.params.uuid, request.user!.sub),
   );
 }

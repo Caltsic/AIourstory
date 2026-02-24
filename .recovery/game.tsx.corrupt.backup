@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import {
   Text,
   View,
@@ -26,6 +26,7 @@ import {
   getStory,
   updateStory,
   buildHistoryContext,
+  buildHistoryContextBounded,
   buildFullHistoryContext,
   type Story,
   type StorySegment,
@@ -48,35 +49,31 @@ import {
   getLLMConfig,
   evaluateCustomAction,
   evaluateInitialAffinities,
-  evaluateContinuationQuality,
   generateCharacterPortraitPrompt,
+  HISTORY_CONTEXT_CHARS_LIMIT,
   PACE_MIN_CHARS,
 } from "@/lib/llm-client";
 import { buildDiceOutcomeContext } from "@/lib/llm-prompts";
 import { generateImage, getImageConfig } from "@/lib/image-client";
 import { rollDice, evaluateDiceResult } from "@/lib/dice";
 
-const HISTORY_SUMMARY_TRIGGER_CHARS = 15_000;
-const SUMMARY_REFRESH_DELTA_CHARS = Math.max(
-  1200,
-  Math.floor(HISTORY_SUMMARY_TRIGGER_CHARS * 0.4),
-);
+const HISTORY_SUMMARY_TRIGGER_CHARS = HISTORY_CONTEXT_CHARS_LIMIT;
+const SUMMARY_REFRESH_DELTA_CHARS = HISTORY_SUMMARY_TRIGGER_CHARS;
+const STALE_STORY_GENERATION_MS = 3 * 60 * 1000;
 const AUTO_IMAGE_HISTORY_LIMIT = 30;
 const AUTO_READ_SPEEDS = [1, 2, 3, 4] as const;
-const BG_SCALE_PRESETS = [50, 75, 100, 125, 150] as const;
-const SCALE_PANEL_AUTO_HIDE_MS = 2500;
 const AUTO_READ_DELAY_MS: Record<(typeof AUTO_READ_SPEEDS)[number], number> = {
   1: 1800,
   2: 1200,
   3: 800,
   4: 550,
 };
-const BG_SCALE_TRACK_HEIGHT = 160;
 
 interface LastSentContextMetrics {
   fullChars: number;
   rawChars: number;
   sentChars: number;
+  sentSegments: number;
   truncated: boolean;
   pacing: keyof typeof PACE_MIN_CHARS;
   minCharsTarget: number;
@@ -144,7 +141,7 @@ function countSegmentChars(segments: StorySegment[]): number {
   }, 0);
 }
 
-// ─── Typewriter Hook ─────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Typewriter Hook 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function useTypewriter(text: string, speed = 30) {
   const [displayed, setDisplayed] = useState("");
@@ -185,7 +182,7 @@ function useTypewriter(text: string, speed = 30) {
   return { displayed, done, skip };
 }
 
-// ─── Main Component ──────────────────────────────────────────────────
+// 鈹€鈹€鈹€ Main Component 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export default function GameScreen() {
   const { storyId } = useLocalSearchParams<{ storyId: string }>();
@@ -201,12 +198,6 @@ export default function GameScreen() {
   const [backgroundImageUri, setBackgroundImageUri] = useState<
     string | undefined
   >(undefined);
-  const [backgroundScalePercent, setBackgroundScalePercent] = useState(100);
-  const [characterScalePercent, setCharacterScalePercent] = useState(100);
-  const [scalePanelVisible, setScalePanelVisible] = useState(false);
-  const [scalePanelMode, setScalePanelMode] = useState<
-    "background" | "character"
-  >("background");
   const [showCustomInputModal, setShowCustomInputModal] = useState(false);
   const [showCharacterCards, setShowCharacterCards] = useState(false);
   const [showPromptHistory, setShowPromptHistory] = useState(false);
@@ -248,26 +239,33 @@ export default function GameScreen() {
       fullChars: 0,
       rawChars: 0,
       sentChars: 0,
+      sentSegments: 0,
       truncated: false,
-      pacing: "轻松",
-      minCharsTarget: PACE_MIN_CHARS["轻松"],
+      pacing: "杞绘澗",
+      minCharsTarget: PACE_MIN_CHARS["杞绘澗"],
       generatedChars: 0,
       durationMs: null,
       at: null,
     });
   const [historyStuckCount, setHistoryStuckCount] = useState(0);
   const [lastAffinityDebug, setLastAffinityDebug] =
-    useState<string>("暂无好感结算");
+    useState<string>("鏆傛棤濂芥劅缁撶畻");
   const [affinityToastText, setAffinityToastText] = useState<string>("");
   const [autoReadEnabled, setAutoReadEnabled] = useState(false);
   const [autoReadSpeedIndex, setAutoReadSpeedIndex] = useState(0);
   const isMountedRef = useRef(true);
+  const activeStoryIdRef = useRef<string | null>(null);
+  const generationTokenRef = useRef(0);
+  const activeGenerationRef = useRef<{
+    token: number;
+    storyId: string;
+    kind: "initial" | "continue";
+  } | null>(null);
   const autoReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const affinityToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const scalePanelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSceneTapAtRef = useRef(0);
+  const generationStartedAtRef = useRef<number | null>(null);
   const backgroundTaskInFlightRef = useRef(false);
   const autoBackgroundQueueRef = useRef<
     { storyId: string; summary: string; trigger: string }[]
@@ -295,7 +293,6 @@ export default function GameScreen() {
   // Current segment being displayed
   const [viewIndex, setViewIndex] = useState(0);
   const currentSegment = story?.segments[viewIndex] ?? null;
-  const characterScaleFactor = characterScalePercent / 100;
   const isChoice = currentSegment?.type === "choice";
   const hasUsableChoices =
     isChoice &&
@@ -303,9 +300,29 @@ export default function GameScreen() {
     currentSegment.choices.length > 0;
   const currentFullHistoryChars = countSegmentChars(story?.segments ?? []);
   const currentHistoryChars = (story?.historyContext ?? "").trim().length;
-  const currentSentChars = currentFullHistoryChars;
+  const currentSentChars = lastSentContextMetrics.at
+    ? lastSentContextMetrics.sentChars
+    : currentHistoryChars;
   const currentTruncated = false;
-  const currentPacing = story?.currentPacing ?? "轻松";
+  const currentSentSegments = (() => {
+    if (!story) return 0;
+    if (
+      lastSentContextMetrics.at &&
+      story.storyGenerationStatus === "generating"
+    ) {
+      return Math.min(
+        100,
+        Math.max(0, lastSentContextMetrics.sentSegments || 0),
+      );
+    }
+    const bounded = buildHistoryContextBounded(
+      story.segments,
+      story.storySummary,
+      { maxRecentSegments: 100, maxChars: HISTORY_SUMMARY_TRIGGER_CHARS },
+    );
+    return Math.min(100, Math.max(0, bounded.recentSegmentsIncluded));
+  })();
+  const currentPacing = story?.currentPacing ?? "杞绘澗";
   const currentMinCharsTarget = PACE_MIN_CHARS[currentPacing];
   const currentGeneratedChars = story?.lastGeneratedChars ?? 0;
   const autoReadSpeed = AUTO_READ_SPEEDS[autoReadSpeedIndex];
@@ -319,8 +336,8 @@ export default function GameScreen() {
     ? [
         {
           id: "protagonist",
-          name: story.protagonistName || "主角",
-          hiddenName: story.protagonistName || "主角",
+          name: story.protagonistName || "涓昏",
+          hiddenName: story.protagonistName || "涓昏",
           isNameRevealed: true,
           gender: "",
           personality: story.protagonistDescription || "",
@@ -374,33 +391,96 @@ export default function GameScreen() {
     }
   }
 
-  function clearScalePanelTimer() {
-    if (scalePanelTimerRef.current) {
-      clearTimeout(scalePanelTimerRef.current);
-      scalePanelTimerRef.current = null;
-    }
-  }
-
-  async function mutateLatestStory(
-    storyIdValue: string,
-    updater: (draft: Story) => void,
-  ): Promise<Story | null> {
-    const latest = await getStory(storyIdValue);
-    if (!latest) return null;
-    updater(latest);
-    await updateStory(latest);
-    return latest;
-  }
-
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
       clearAutoReadTimer();
       clearAffinityToastTimer();
-      clearScalePanelTimer();
       clearDiceTimers();
     };
   }, []);
+
+  useEffect(() => {
+    activeStoryIdRef.current = storyId ?? null;
+    // Invalidate any in-flight UI updates from previous storyId.
+    activeGenerationRef.current = null;
+  }, [storyId]);
+
+  useEffect(() => {
+    if (generating) {
+      if (generationStartedAtRef.current === null) {
+        generationStartedAtRef.current = Date.now();
+      }
+      return;
+    }
+    generationStartedAtRef.current = null;
+  }, [generating]);
+
+  useEffect(() => {
+    if (!generating || !story) return;
+
+    const targetStoryId = story.id;
+    const startedAt = generationStartedAtRef.current ?? Date.now();
+    const remainingMs = Math.max(
+      0,
+      STALE_STORY_GENERATION_MS - (Date.now() - startedAt),
+    );
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        const latest = await getStory(targetStoryId);
+        if (!latest || latest.storyGenerationStatus !== "generating") return;
+
+        latest.storyGenerationStatus = "failed";
+        if (!latest.lastStoryGenerationError?.trim()) {
+          latest.lastStoryGenerationError =
+            "鍓ф儏鐢熸垚瓒呮椂鏈畬鎴愶紙180绉掞級锛屽凡鑷姩鍋滄锛岃閲嶈瘯銆?;
+        }
+        await updateStory(latest);
+
+        if (
+          !isMountedRef.current ||
+          activeStoryIdRef.current !== targetStoryId
+        ) {
+          return;
+        }
+
+        setStory((prev) => {
+          if (!prev || prev.id !== targetStoryId) return prev;
+          return {
+            ...prev,
+            storyGenerationStatus: "failed",
+            lastStoryGenerationError: latest.lastStoryGenerationError,
+          };
+        });
+        setGenerating(false);
+        Alert.alert("鐢熸垚瓒呮椂", latest.lastStoryGenerationError);
+      })();
+    }, remainingMs);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [generating, story?.id]);
+
+  function isUiActive(targetStoryId: string, token: number): boolean {
+    if (!isMountedRef.current) return false;
+    if (!targetStoryId) return false;
+    if (activeStoryIdRef.current !== targetStoryId) return false;
+    const active = activeGenerationRef.current;
+    if (!active) return false;
+    return active.storyId === targetStoryId && active.token === token;
+  }
+
+  async function persistCurrentIndex(storyIdValue: string, index: number) {
+    const latest = await getStory(storyIdValue);
+    if (!latest) return;
+    latest.currentIndex = Math.max(
+      0,
+      Math.min(index, latest.segments.length - 1),
+    );
+    await updateStory(latest);
+  }
 
   useEffect(() => {
     clearAutoReadTimer();
@@ -430,12 +510,7 @@ export default function GameScreen() {
       if (!story || viewIndex >= story.segments.length - 1) return;
       const next = viewIndex + 1;
       setViewIndex(next);
-      void mutateLatestStory(story.id, (draft) => {
-        draft.currentIndex = Math.max(
-          0,
-          Math.min(next, draft.segments.length - 1),
-        );
-      });
+      void persistCurrentIndex(story.id, next);
     }, delay);
 
     return () => {
@@ -487,48 +562,33 @@ export default function GameScreen() {
       return;
 
     const fallbackChoices = [
-      "继续当前行动",
-      "先观察周围情况",
-      "与关键人物对话",
+      "缁х画褰撳墠琛屽姩",
+      "鍏堣瀵熷懆鍥存儏鍐?,
+      "涓庡叧閿汉鐗╁璇?,
     ];
     const patched: StorySegment = {
       ...currentSegment,
-      text: currentSegment.text?.trim() || "接下来你要怎么做？",
+      text: currentSegment.text?.trim() || "鎺ヤ笅鏉ヤ綘瑕佹€庝箞鍋氾紵",
       choices: fallbackChoices,
       judgmentValues:
-        story.difficulty === "无随机"
+        story.difficulty === "鏃犻殢鏈?
           ? undefined
           : fallbackChoices.map(() => null),
     };
 
-    setStory((prev) => {
-      if (!prev || prev.id !== story.id) return prev;
-      const nextSegments = [...prev.segments];
-      if (viewIndex < 0 || viewIndex >= nextSegments.length) return prev;
-      nextSegments[viewIndex] = patched;
-      return { ...prev, segments: nextSegments };
-    });
-    void mutateLatestStory(story.id, (draft) => {
-      if (viewIndex < 0 || viewIndex >= draft.segments.length) return;
-      draft.segments[viewIndex] = patched;
-    });
+    story.segments[viewIndex] = patched;
+    void (async () => {
+      const latest = await getStory(story.id);
+      if (!latest) return;
+      latest.segments[viewIndex] = patched;
+      await updateStory(latest);
+    })();
+    setStory({ ...story });
   }, [story, currentSegment, viewIndex]);
 
   useEffect(() => {
     syncImageQueueSnapshot(story ?? null);
   }, [story]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!story) return;
-    const value = story.backgroundScalePercent ?? 100;
-    if (value !== backgroundScalePercent) {
-      setBackgroundScalePercent(value);
-    }
-    const characterValue = story.characterScalePercent ?? 100;
-    if (characterValue !== characterScalePercent) {
-      setCharacterScalePercent(characterValue);
-    }
-  }, [story?.id, story?.backgroundScalePercent, story?.characterScalePercent]);
 
   async function loadStory() {
     setLoading(true);
@@ -540,44 +600,165 @@ export default function GameScreen() {
     if (applyAutoRevealByStableRealName(s)) {
       await updateStory(s);
     }
+
+    // 鍥炴敹鍘嗗彶閬楃暀鐨?generating 鐘舵€侊紝閬垮厤姘镐箙杞湀銆?    if (
+      s.storyGenerationStatus === "generating" &&
+      Date.now() - s.updatedAt > STALE_STORY_GENERATION_MS
+    ) {
+      s.storyGenerationStatus = "failed";
+      s.lastStoryGenerationError =
+        "妫€娴嬪埌鏃х殑鐢熸垚浠诲姟宸茶秴鏃舵湭瀹屾垚锛屽凡鑷姩鍥炴敹锛岃閲嶈瘯銆?;
+      await updateStory(s);
+    }
+
     setStory(s);
+    if (s.storyGenerationStatus === "generating") {
+      // Avoid auto-triggering another generation while an existing one may still be running.
+      setGenerating(true);
+    } else {
+      setGenerating(false);
+    }
     syncImageQueueSnapshot(s);
     if (s.backgroundImageUri) {
       setBackgroundImageUri(s.backgroundImageUri);
     }
-    setBackgroundScalePercent(s.backgroundScalePercent ?? 100);
-    setCharacterScalePercent(s.characterScalePercent ?? 100);
     if (s.segments.length === 0) {
+      // 濡傛灉瀛樻。宸插瓨鍦ㄦ憳瑕?鎬荤粨璁板綍锛屼絾娈佃惤涓虹┖锛岃嚜鍔ㄤ粠鎽樿鎭㈠缁啓锛岄伩鍏嶅洖鍒板紑澶撮噸鐢熸垚銆?      if (
+        s.storyGenerationStatus !== "generating" &&
+        (Boolean(s.storySummary?.trim()) || (s.summaryHistory?.length ?? 0) > 0)
+      ) {
+        void recoverFromSummary(s);
+        setLoading(false);
+        return;
+      }
       // Check API config before generating
       const config = await getLLMConfig();
       if (!config.apiKey) {
         Alert.alert(
-          "未配置 API",
-          "请先在设置中配置 AI API Key 才能使用剧情生成功能",
+          "鏈厤缃?API",
+          "璇峰厛鍦ㄨ缃腑閰嶇疆 AI API Key 鎵嶈兘浣跨敤鍓ф儏鐢熸垚鍔熻兘",
           [
-            { text: "取消", style: "cancel" },
-            { text: "去设置", onPress: () => router.push("/(tabs)/settings") },
+            { text: "鍙栨秷", style: "cancel" },
+            { text: "鍘昏缃?, onPress: () => router.push("/(tabs)/settings") },
           ],
         );
         setLoading(false);
         return;
       }
-      // Generate initial story
-      generateInitial(s);
+      if (s.storyGenerationStatus !== "generating") {
+        // Generate initial story
+        generateInitial(s);
+      }
     } else {
       setViewIndex(s.currentIndex);
     }
     setLoading(false);
   }
 
+  async function recoverFromSummary(s: Story) {
+    const targetId = s.id;
+    const token = (generationTokenRef.current += 1);
+    activeGenerationRef.current = {
+      token,
+      storyId: targetId,
+      kind: "continue",
+    };
+
+    s.storyGenerationStatus = "generating";
+    s.lastStoryGenerationError = "";
+    await updateStory(s);
+    if (isUiActive(targetId, token)) {
+      setGenerating(true);
+    }
+
+    try {
+      const summaryContext = buildHistoryContext([], s.storySummary || "");
+      const result = await continueStory({
+        title: s.title,
+        genre: s.genre,
+        premise: s.premise,
+        history: summaryContext,
+        choiceText: "缁х画鎺ㄨ繘褰撳墠灞€鍔?,
+        protagonistName: s.protagonistName ?? "",
+        protagonistGender: s.protagonistGender ?? "鏈煡",
+        protagonistDescription: s.protagonistDescription ?? "",
+        protagonistAppearance: s.protagonistAppearance ?? "",
+        difficulty: s.difficulty,
+        pacing: s.currentPacing,
+        characterCards: s.characterCards,
+      });
+
+      if (!result.segments || result.segments.length === 0) {
+        throw new Error("鎭㈠鐢熸垚澶辫触锛欰I 鏈繑鍥炴湁鏁堝墽鎯呮钀?);
+      }
+
+      const recoveredSegments = ensureChoiceSegment(
+        result.segments as StorySegment[],
+      );
+      const latest = (await getStory(targetId)) ?? s;
+      latest.segments = recoveredSegments;
+      latest.currentIndex = 0;
+      latest.currentPacing = result.pacing;
+      latest.lastGeneratedChars = result.generatedChars;
+      latest.latestGeneratedContext =
+        buildImageContextFromSegments(recoveredSegments);
+
+      const newCharacterCardIds = processNewCharacters(
+        latest,
+        result.newCharacters,
+      );
+      await applyAIInitialAffinityForNewCharacters(
+        latest,
+        result.newCharacters,
+      );
+      applyAutoRevealByStableRealName(latest);
+
+      latest.storyGenerationStatus = "idle";
+      latest.lastStoryGenerationError = "";
+      await updateStory(latest);
+
+      if (isUiActive(targetId, token)) {
+        setStory({ ...latest });
+        setViewIndex(0);
+      }
+
+      enqueueAutoPortraitGeneration(latest.id, newCharacterCardIds);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "鏈煡閿欒";
+      const latest = await getStory(targetId);
+      if (latest) {
+        latest.storyGenerationStatus = "failed";
+        latest.lastStoryGenerationError = message;
+        await updateStory(latest);
+      }
+      if (isUiActive(targetId, token)) {
+        Alert.alert("鎭㈠澶辫触", message);
+      }
+    } finally {
+      if (isUiActive(targetId, token)) {
+        setGenerating(false);
+      }
+    }
+  }
+
   async function generateInitial(s: Story) {
-    setGenerating(true);
+    const targetId = s.id;
+    const token = (generationTokenRef.current += 1);
+    activeGenerationRef.current = { token, storyId: targetId, kind: "initial" };
+
+    s.storyGenerationStatus = "generating";
+    s.lastStoryGenerationError = "";
+    await updateStory(s);
+    if (isUiActive(targetId, token)) {
+      setGenerating(true);
+    }
     try {
       const result = await generateStory({
         title: s.title,
         premise: s.premise,
         genre: s.genre,
         protagonistName: s.protagonistName ?? "",
+        protagonistGender: s.protagonistGender ?? "鏈煡",
         protagonistDescription: s.protagonistDescription ?? "",
         protagonistAppearance: s.protagonistAppearance ?? "",
         difficulty: s.difficulty,
@@ -585,6 +766,7 @@ export default function GameScreen() {
         characterCards: s.characterCards,
       });
       if (result.segments && result.segments.length > 0) {
+        const summariesForAutoBackground: string[] = [];
         const initialSegments = ensureChoiceSegment(
           result.segments as StorySegment[],
         );
@@ -594,7 +776,7 @@ export default function GameScreen() {
         s.latestGeneratedContext =
           buildImageContextFromSegments(initialSegments);
         const openingImageContext = [
-          `故事开场：${s.premise}`,
+          `鏁呬簨寮€鍦猴細${s.premise}`,
           buildImageContextFromSegments(initialSegments.slice(0, 6)),
         ]
           .filter(Boolean)
@@ -616,13 +798,18 @@ export default function GameScreen() {
           if (summaryResult.summary) {
             s.storySummary = summaryResult.summary.trim();
             addSummaryRecord(s, summaryResult, fullHistoryText.length);
+            summariesForAutoBackground.push(s.storySummary);
           }
         } catch (summaryErr) {
           console.warn("Initial summary generation failed:", summaryErr);
         }
+        s.storyGenerationStatus = "idle";
+        s.lastStoryGenerationError = "";
         await updateStory(s);
-        setStory({ ...s });
-        setViewIndex(0);
+        if (isUiActive(targetId, token)) {
+          setStory({ ...s });
+          setViewIndex(0);
+        }
         if (openingImageContext) {
           enqueueAutoBackgroundGeneration(
             s.id,
@@ -630,13 +817,24 @@ export default function GameScreen() {
             "initial-opening",
           );
         }
+        for (const summaryText of summariesForAutoBackground) {
+          enqueueAutoBackgroundGeneration(s.id, summaryText, "initial-summary");
+        }
         enqueueAutoPortraitGeneration(s.id, newCharacterCardIds);
       }
     } catch (err) {
       console.error("Generate failed:", err);
-      Alert.alert("生成失败", err instanceof Error ? err.message : "未知错误");
+      s.storyGenerationStatus = "failed";
+      s.lastStoryGenerationError =
+        err instanceof Error ? err.message : "鏈煡閿欒";
+      await updateStory(s);
+      if (isUiActive(targetId, token)) {
+        Alert.alert("鐢熸垚澶辫触", s.lastStoryGenerationError);
+      }
     } finally {
-      setGenerating(false);
+      if (isUiActive(targetId, token)) {
+        setGenerating(false);
+      }
     }
   }
 
@@ -646,7 +844,7 @@ export default function GameScreen() {
 
   function getCharacterDisplayName(card: CharacterCard): string {
     if (card.isNameRevealed) return card.name;
-    return card.hiddenName?.trim() || "陌生人";
+    return card.hiddenName?.trim() || "闄岀敓浜?;
   }
 
   function findCharacterCardBySegmentName(name?: string): CharacterCard | null {
@@ -686,7 +884,7 @@ export default function GameScreen() {
       title =
         fallback && !recentTitles.includes(fallback)
           ? fallback
-          : `${title}-新进展`;
+          : `${title}-鏂拌繘灞昤;
     }
     const latest = targetStory.summaryHistory?.[0]?.summary?.trim();
     if (latest && latest === trimmed) return;
@@ -712,27 +910,6 @@ export default function GameScreen() {
       .slice(0, limit);
   }
 
-  function getRecentContinuationFeedback(
-    targetStory: Story,
-    limit = 3,
-  ): string[] {
-    return (targetStory.continuationFeedbackHistory ?? [])
-      .slice(0, limit)
-      .map((item) => item.content?.trim())
-      .filter((item): item is string => !!item);
-  }
-
-  function formatContinuationEvaluationLine(input: {
-    score: number;
-    advice: string;
-    issues: string[];
-  }): string {
-    const issueText = input.issues.length
-      ? `问题: ${input.issues.join("；")}`
-      : "问题: 无明显硬伤";
-    return `评分${input.score}/100；${issueText}；建议: ${input.advice}`;
-  }
-
   function processNewCharacters(
     s: Story,
     newCharacters?: {
@@ -749,13 +926,13 @@ export default function GameScreen() {
     const inferInitialAffinity = (text: string): number => {
       const normalized = text || "";
       if (
-        /(相依为命|亲妹妹|亲生妹妹|抚养长大|养父|养母|亲生父母)/.test(
+        /(鐩镐緷涓哄懡|浜插濡箌浜茬敓濡瑰|鎶氬吇闀垮ぇ|鍏荤埗|鍏绘瘝|浜茬敓鐖舵瘝)/.test(
           normalized,
         )
       ) {
         return 85;
       }
-      if (/(妹妹|弟弟|父亲|母亲|爸爸|妈妈|家人|亲人)/.test(normalized)) {
+      if (/(濡瑰|寮熷紵|鐖朵翰|姣嶄翰|鐖哥埜|濡堝|瀹朵汉|浜蹭汉)/.test(normalized)) {
         return 45;
       }
       return 0;
@@ -772,6 +949,7 @@ export default function GameScreen() {
       const initialAffinity = inferInitialAffinity(
         `${nc.personality || ""}\n${nc.background || ""}`,
       );
+
       const resolved = resolveExistingCharacterCardForIncoming(
         s.characterCards,
         realName,
@@ -864,6 +1042,7 @@ export default function GameScreen() {
         premise: s.premise,
         genre: s.genre,
         protagonistName: s.protagonistName,
+        protagonistGender: s.protagonistGender,
         protagonistDescription: s.protagonistDescription,
         protagonistAppearance: s.protagonistAppearance,
         characters: newCharacters.map((c) => ({
@@ -893,15 +1072,15 @@ export default function GameScreen() {
     return segments
       .map((segment) => {
         if (segment.type === "dialogue" && segment.character) {
-          return `${segment.character}：${segment.text}`;
+          return `${segment.character}锛?{segment.text}`;
         }
         if (segment.type === "choice") {
           const options = Array.isArray(segment.choices)
             ? segment.choices.join(" / ")
             : "";
           return options
-            ? `选择：${segment.text}（可选：${options}）`
-            : `选择：${segment.text}`;
+            ? `閫夋嫨锛?{segment.text}锛堝彲閫夛細${options}锛塦
+            : `閫夋嫨锛?{segment.text}`;
         }
         return segment.text;
       })
@@ -926,10 +1105,10 @@ export default function GameScreen() {
       0,
       Math.min(4, Math.floor(Math.max(0, affinity) / 25)),
     );
-    if (tier <= 0) return "（好感度达到 25 解锁）";
+    if (tier <= 0) return "锛堝ソ鎰熷害杈惧埌 25 瑙ｉ攣锛?;
     const chunk = Math.ceil(normalized.length / 4);
     const visible = normalized.slice(0, chunk * tier).trim();
-    return visible || "（内容待解锁）";
+    return visible || "锛堝唴瀹瑰緟瑙ｉ攣锛?;
   }
 
   function applyAffinityFromChoice(
@@ -939,8 +1118,8 @@ export default function GameScreen() {
     if (!story) {
       return {
         changes: [],
-        toastText: "好感变化：本次无变化",
-        debugText: "无存档",
+        toastText: "濂芥劅鍙樺寲锛氭湰娆℃棤鍙樺寲",
+        debugText: "鏃犲瓨妗?,
       };
     }
 
@@ -948,15 +1127,15 @@ export default function GameScreen() {
     if (!text) {
       return {
         changes: [],
-        toastText: "好感变化：本次无变化",
-        debugText: "空选择文本",
+        toastText: "濂芥劅鍙樺寲锛氭湰娆℃棤鍙樺寲",
+        debugText: "绌洪€夋嫨鏂囨湰",
       };
     }
 
     const positive =
-      /(帮助|保护|救|安慰|支持|信任|照顾|协助|陪伴|挡在前面|承担|道歉|坦白|配合|维护|安抚|鼓励|接纳)/;
+      /(甯姪|淇濇姢|鏁憒瀹夋叞|鏀寔|淇′换|鐓ч【|鍗忓姪|闄即|鎸″湪鍓嶉潰|鎵挎媴|閬撴瓑|鍧︾櫧|閰嶅悎|缁存姢|瀹夋姎|榧撳姳|鎺ョ撼)/;
     const negative =
-      /(欺骗|威胁|伤害|背叛|抛下|利用|抢夺|攻击|羞辱|讽刺|冷落|隐瞒|诬陷|胁迫|出卖|推开)/;
+      /(娆洪獥|濞佽儊|浼ゅ|鑳屽彌|鎶涗笅|鍒╃敤|鎶㈠ず|鏀诲嚮|缇炶颈|璁藉埡|鍐疯惤|闅愮瀿|璇櫡|鑳佽揩|鍑哄崠|鎺ㄥ紑)/;
 
     const hasPositive = positive.test(text);
     const hasNegative = negative.test(text);
@@ -976,31 +1155,30 @@ export default function GameScreen() {
         negative: { strong: number; weak: number };
       }
     > = {
-      简单: {
+      绠€鍗? {
         positive: { strong: 12, weak: 10 },
         negative: { strong: 2, weak: 1 },
       },
-      普通: {
+      鏅€? {
         positive: { strong: 8, weak: 6 },
         negative: { strong: 4, weak: 3 },
       },
-      困难: {
+      鍥伴毦: {
         positive: { strong: 5, weak: 3 },
         negative: { strong: 7, weak: 6 },
       },
-      噩梦: {
+      鍣╂ⅵ: {
         positive: { strong: 2, weak: 1 },
         negative: { strong: 10, weak: 8 },
       },
-      无随机: {
+      鏃犻殢鏈? {
         positive: { strong: 7, weak: 5 },
         negative: { strong: 4, weak: 3 },
       },
     };
     const magnitudePreset = difficultyMagnitudeMap[story.difficulty];
 
-    // 每次互动最多影响 2 名关联角色，确保“有互动就有变化”且反馈稳定。
-    const reasonPriority: Array<AffinityChange["reason"]> = [
+    // 姣忔浜掑姩鏈€澶氬奖鍝?2 鍚嶅叧鑱旇鑹诧紝纭繚鈥滄湁浜掑姩灏辨湁鍙樺寲鈥濅笖鍙嶉绋冲畾銆?    const reasonPriority: Array<AffinityChange["reason"]> = [
       "mention",
       "recent-dialogue",
       "summary",
@@ -1056,8 +1234,8 @@ export default function GameScreen() {
     if (candidates.length === 0) {
       return {
         changes: [],
-        toastText: "好感变化：本次无变化",
-        debugText: "未匹配到相关角色",
+        toastText: "濂芥劅鍙樺寲锛氭湰娆℃棤鍙樺寲",
+        debugText: "鏈尮閰嶅埌鐩稿叧瑙掕壊",
       };
     }
 
@@ -1100,8 +1278,8 @@ export default function GameScreen() {
     if (changes.length === 0) {
       return {
         changes: [],
-        toastText: "好感变化：本次无变化",
-        debugText: "变化为 0 或已触达边界",
+        toastText: "濂芥劅鍙樺寲锛氭湰娆℃棤鍙樺寲",
+        debugText: "鍙樺寲涓?0 鎴栧凡瑙﹁揪杈圭晫",
       };
     }
 
@@ -1110,7 +1288,7 @@ export default function GameScreen() {
         (item) =>
           `${item.name}${item.delta > 0 ? `+${item.delta}` : item.delta}`,
       )
-      .join("，");
+      .join("锛?);
     const reasonCount = changes.reduce(
       (acc, item) => {
         acc[item.reason] += 1;
@@ -1121,8 +1299,8 @@ export default function GameScreen() {
 
     return {
       changes,
-      toastText: `好感变化：${changeText}`,
-      debugText: `影响${changes.length}人（难度${story.difficulty}，方向${inferredPolarity > 0 ? "增" : "减"}，点名${reasonCount.mention}/近期对话${reasonCount["recent-dialogue"]}/摘要${reasonCount.summary}）`,
+      toastText: `濂芥劅鍙樺寲锛?{changeText}`,
+      debugText: `褰卞搷${changes.length}浜猴紙闅惧害${story.difficulty}锛屾柟鍚?{inferredPolarity > 0 ? "澧? : "鍑?}锛岀偣鍚?{reasonCount.mention}/杩戞湡瀵硅瘽${reasonCount["recent-dialogue"]}/鎽樿${reasonCount.summary}锛塦,
     };
   }
 
@@ -1237,16 +1415,19 @@ export default function GameScreen() {
     const latestSourceChars = latest.summaryHistory?.[0]?.sourceChars ?? 0;
     if (latestSourceChars >= task.sourceChars) return;
 
-    // 历史压缩仅更新摘要，不裁剪 segments，确保最近剧情段上下文完整可追溯。
-    latest.storySummary = resolved.summary;
+    // 閲嶈锛氬巻鍙插帇缂╁彧鏇存柊鎽樿锛屼笉淇敼 segments銆?    latest.storySummary = resolved.summary;
     addSummaryRecord(latest, resolved, task.sourceChars);
     await updateStory(latest);
+    enqueueAutoBackgroundGeneration(latest.id, latest.storySummary, trigger);
 
     setStory((prev) => {
       if (!prev || prev.id !== latest.id) return prev;
-      return { ...latest };
+      return {
+        ...prev,
+        storySummary: latest.storySummary,
+        summaryHistory: latest.summaryHistory,
+      };
     });
-    setViewIndex(latest.currentIndex);
   }
 
   function confirmChoice(choiceText: string, choiceIndex?: number) {
@@ -1268,15 +1449,15 @@ export default function GameScreen() {
 
   function getImageStatusLabel(): string {
     if (imageGenerating || story?.imageGenerationStatus === "generating") {
-      return "生图中";
+      return "鐢熷浘涓?;
     }
     if (story?.imageGenerationStatus === "success") {
-      return "生图完成";
+      return "鐢熷浘瀹屾垚";
     }
     if (story?.imageGenerationStatus === "failed") {
-      return "生图失败";
+      return "鐢熷浘澶辫触";
     }
-    return "未生图";
+    return "鏈敓鍥?;
   }
 
   function formatPromptTime(ts: number): string {
@@ -1315,14 +1496,14 @@ export default function GameScreen() {
     cardId: string,
     targetStory: Story | null,
   ): string {
-    if (cardId === "protagonist") return "主角";
+    if (cardId === "protagonist") return "涓昏";
     if (targetStory && targetStory.id === taskStoryId) {
       const found = targetStory.characterCards.find(
         (item) => item.id === cardId,
       );
       if (found) return getCharacterDisplayName(found);
     }
-    return `角色 ${cardId.slice(0, 8)}`;
+    return `瑙掕壊 ${cardId.slice(0, 8)}`;
   }
 
   function parseAutoPortraitTaskKey(taskKey: string): {
@@ -1343,96 +1524,6 @@ export default function GameScreen() {
     const normalized = summary.replace(/\s+/g, " ").trim();
     if (normalized.length <= max) return normalized;
     return `${normalized.slice(0, max)}...`;
-  }
-
-  function getScaledSize(base: number): number {
-    const scaled = Math.round(base * characterScaleFactor);
-    return Math.max(32, Math.min(180, scaled));
-  }
-
-  function normalizeScalePercent(raw: number): number {
-    const closest = BG_SCALE_PRESETS.reduce((best, value) => {
-      return Math.abs(value - raw) < Math.abs(best - raw) ? value : best;
-    }, BG_SCALE_PRESETS[0]);
-    return closest;
-  }
-
-  function restartScalePanelAutoHide() {
-    clearScalePanelTimer();
-    scalePanelTimerRef.current = setTimeout(() => {
-      setScalePanelVisible(false);
-      scalePanelTimerRef.current = null;
-    }, SCALE_PANEL_AUTO_HIDE_MS);
-  }
-
-  function showScalePanel(mode: "background" | "character") {
-    setScalePanelMode(mode);
-    setScalePanelVisible(true);
-    restartScalePanelAutoHide();
-  }
-
-  function updateBackgroundScalePercent(nextRaw: number) {
-    const next = normalizeScalePercent(nextRaw);
-    if (next === backgroundScalePercent) {
-      restartScalePanelAutoHide();
-      return;
-    }
-    restartScalePanelAutoHide();
-    setBackgroundScalePercent(next);
-    if (!story) return;
-    void mutateLatestStory(story.id, (draft) => {
-      draft.backgroundScalePercent = next;
-    });
-  }
-
-  function updateCharacterScalePercent(nextRaw: number) {
-    const next = normalizeScalePercent(nextRaw);
-    if (next === characterScalePercent) {
-      restartScalePanelAutoHide();
-      return;
-    }
-    restartScalePanelAutoHide();
-    setCharacterScalePercent(next);
-    if (!story) return;
-    void mutateLatestStory(story.id, (draft) => {
-      draft.characterScalePercent = next;
-    });
-  }
-
-  function getScalePercentByMode(mode: "background" | "character") {
-    return mode === "background"
-      ? backgroundScalePercent
-      : characterScalePercent;
-  }
-
-  function updateScaleByMode(
-    mode: "background" | "character",
-    nextRaw: number,
-  ) {
-    if (mode === "background") {
-      updateBackgroundScalePercent(nextRaw);
-      return;
-    }
-    updateCharacterScalePercent(nextRaw);
-  }
-
-  function applyScaleFromTrack(
-    mode: "background" | "character",
-    locationY: number,
-  ) {
-    const clampedY = Math.max(0, Math.min(BG_SCALE_TRACK_HEIGHT, locationY));
-    const ratio = 1 - clampedY / BG_SCALE_TRACK_HEIGHT;
-    const value = 50 + ratio * 100;
-    updateScaleByMode(mode, value);
-  }
-
-  function handleSceneDecorationTap() {
-    const now = Date.now();
-    const elapsed = now - lastSceneTapAtRef.current;
-    lastSceneTapAtRef.current = now;
-    if (elapsed > 0 && elapsed < 280) {
-      showScalePanel("background");
-    }
   }
 
   function buildImageQueueSnapshot(
@@ -1477,43 +1568,6 @@ export default function GameScreen() {
   function syncImageQueueSnapshot(targetStory: Story | null = story ?? null) {
     if (!isMountedRef.current) return;
     setImageQueueSnapshot(buildImageQueueSnapshot(targetStory));
-  }
-
-  async function getAutoBackgroundEveryChoices(): Promise<number> {
-    const config = await getLLMConfig();
-    const raw = Number(config.autoBackgroundEveryChoices);
-    if (!Number.isFinite(raw)) return 3;
-    return Math.max(1, Math.min(100, Math.floor(raw)));
-  }
-
-  async function triggerAutoBackgroundOnChoiceProgress(
-    storyIdValue: string,
-    latestChoiceText: string,
-  ) {
-    const latest = await getStory(storyIdValue);
-    if (!latest) return;
-    const interval = await getAutoBackgroundEveryChoices();
-    const choiceCount = Math.max(0, latest.choiceCount ?? 0);
-    const checkpoint = Math.max(0, latest.autoBgChoiceCheckpoint ?? 0);
-
-    const crossed =
-      Math.floor(choiceCount / interval) > Math.floor(checkpoint / interval);
-    if (!crossed) return;
-
-    const summary =
-      latest.latestGeneratedContext?.trim() ||
-      `玩家选择推进：${latestChoiceText.trim()}`;
-    enqueueAutoBackgroundGeneration(storyIdValue, summary, "choice-interval");
-
-    latest.autoBgChoiceCheckpoint = choiceCount;
-    await updateStory(latest);
-    if (isMountedRef.current) {
-      setStory((prev) =>
-        prev && prev.id === latest.id
-          ? { ...prev, autoBgChoiceCheckpoint: choiceCount }
-          : prev,
-      );
-    }
   }
 
   function enqueueAutoBackgroundGeneration(
@@ -1604,12 +1658,12 @@ export default function GameScreen() {
             }
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : "未知错误";
+          const message = error instanceof Error ? error.message : "鏈煡閿欒";
           const latest = await getStory(task.storyId);
           if (latest) {
             const record: ImagePromptRecord = {
               id: promptRecordId,
-              prompt: imagePrompt || "[自动背景图提示词生成失败]",
+              prompt: imagePrompt || "[鑷姩鑳屾櫙鍥炬彁绀鸿瘝鐢熸垚澶辫触]",
               summary: `[auto:${task.trigger}] ${task.summary}`,
               status: "failed",
               createdAt,
@@ -1703,7 +1757,7 @@ export default function GameScreen() {
 
           const prompt = await generateCharacterPortraitPrompt({
             ...card,
-            gender: card.gender || "未知",
+            gender: card.gender || "鏈煡",
           });
           const uri = await generateImage(prompt);
 
@@ -1730,7 +1784,7 @@ export default function GameScreen() {
             });
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : "未知错误";
+          const message = error instanceof Error ? error.message : "鏈煡閿欒";
           console.warn("[auto-portrait] generation failed:", message);
         } finally {
           autoPortraitInFlightRef.current.delete(taskKey);
@@ -1746,17 +1800,17 @@ export default function GameScreen() {
   async function handleGenerateImage() {
     if (!story || imageGenerating) return;
     if (backgroundTaskInFlightRef.current) {
-      Alert.alert("请稍候", "已有背景生图任务在进行中");
+      Alert.alert("璇风◢鍊?, "宸叉湁鑳屾櫙鐢熷浘浠诲姟鍦ㄨ繘琛屼腑");
       return;
     }
     if (generating) {
-      Alert.alert("请稍候", "剧情生成进行中，请等待完成后再生图");
+      Alert.alert("璇风◢鍊?, "鍓ф儏鐢熸垚杩涜涓紝璇风瓑寰呭畬鎴愬悗鍐嶇敓鍥?);
       return;
     }
 
     const config = await getImageConfig();
     if (!config.imageApiUrl || !config.imageModel) {
-      Alert.alert("未配置生图", "请先在设置中填写图片 API URL 和模型名称");
+      Alert.alert("鏈厤缃敓鍥?, "璇峰厛鍦ㄨ缃腑濉啓鍥剧墖 API URL 鍜屾ā鍨嬪悕绉?);
       return;
     }
 
@@ -1766,24 +1820,15 @@ export default function GameScreen() {
     backgroundTaskInFlightRef.current = true;
     syncImageQueueSnapshot();
     setImageGenerating(true);
-
-    const workingStory =
-      (await getStory(story.id)) ??
-      ({
-        ...story,
-        imagePromptHistory: [...(story.imagePromptHistory ?? [])],
-      } as Story);
     try {
-      workingStory.imageGenerationStatus = "generating";
-      await updateStory(workingStory);
-      setStory((prev) =>
-        prev && prev.id === workingStory.id ? { ...workingStory } : prev,
-      );
+      story.imageGenerationStatus = "generating";
+      await updateStory(story);
+      setStory({ ...story });
 
       const promptSource =
-        workingStory.latestGeneratedContext?.trim() ||
-        buildImageContextFromSegments(workingStory.segments.slice(-8)) ||
-        workingStory.historyContext;
+        story.latestGeneratedContext?.trim() ||
+        buildImageContextFromSegments(story.segments.slice(-8)) ||
+        story.historyContext;
       const imagePrompt = await generateImagePrompt(promptSource);
       const promptRecord: ImagePromptRecord = {
         id: promptRecordId,
@@ -1793,17 +1838,15 @@ export default function GameScreen() {
         createdAt: Date.now(),
       };
 
-      workingStory.imagePromptHistory = [
+      story.imagePromptHistory = [
         promptRecord,
-        ...(workingStory.imagePromptHistory ?? []),
+        ...(story.imagePromptHistory ?? []),
       ].slice(0, AUTO_IMAGE_HISTORY_LIMIT);
-      await updateStory(workingStory);
-      setStory((prev) =>
-        prev && prev.id === workingStory.id ? { ...workingStory } : prev,
-      );
+      await updateStory(story);
+      setStory({ ...story });
 
       const uri = await generateImage(imagePrompt);
-      const current = workingStory.imagePromptHistory.find(
+      const current = story.imagePromptHistory.find(
         (p) => p.id === promptRecordId,
       );
       if (current) {
@@ -1811,34 +1854,29 @@ export default function GameScreen() {
         current.imageUri = uri;
       }
 
-      workingStory.backgroundImageUri = uri;
-      workingStory.imageGenerationStatus = "success";
-      workingStory.lastImageGenerationAt = Date.now();
+      story.backgroundImageUri = uri;
+      story.imageGenerationStatus = "success";
+      story.lastImageGenerationAt = Date.now();
 
-      await updateStory(workingStory);
-      setStory((prev) =>
-        prev && prev.id === workingStory.id ? { ...workingStory } : prev,
-      );
+      await updateStory(story);
+      setStory({ ...story });
       setBackgroundImageUri(uri);
-      Alert.alert("生图完成", "背景图已更新");
+      Alert.alert("鐢熷浘瀹屾垚", "鑳屾櫙鍥惧凡鏇存柊");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "未知错误";
-      if (!workingStory.imagePromptHistory)
-        workingStory.imagePromptHistory = [];
-      const current = workingStory.imagePromptHistory.find(
+      const message = err instanceof Error ? err.message : "鏈煡閿欒";
+      if (!story.imagePromptHistory) story.imagePromptHistory = [];
+      const current = story.imagePromptHistory.find(
         (p) => p.id === promptRecordId,
       );
       if (current) {
         current.status = "failed";
         current.error = message;
       }
-      workingStory.imageGenerationStatus = "failed";
-      workingStory.lastImageGenerationAt = Date.now();
-      await updateStory(workingStory);
-      setStory((prev) =>
-        prev && prev.id === workingStory.id ? { ...workingStory } : prev,
-      );
-      Alert.alert("生图失败", message);
+      story.imageGenerationStatus = "failed";
+      story.lastImageGenerationAt = Date.now();
+      await updateStory(story);
+      setStory({ ...story });
+      Alert.alert("鐢熷浘澶辫触", message);
     } finally {
       setImageGenerating(false);
       backgroundTaskInFlightRef.current = false;
@@ -1853,7 +1891,7 @@ export default function GameScreen() {
       <View style={styles.promptHistorySection}>
         {promptHistory.length === 0 ? (
           <Text style={[styles.promptHistoryEmpty, { color: colors.muted }]}>
-            暂无生图记录
+            鏆傛棤鐢熷浘璁板綍
           </Text>
         ) : (
           promptHistory.map((item) => (
@@ -1881,10 +1919,10 @@ export default function GameScreen() {
                   ]}
                 >
                   {item.status === "success"
-                    ? "完成"
+                    ? "瀹屾垚"
                     : item.status === "failed"
-                      ? "失败"
-                      : "进行中"}
+                      ? "澶辫触"
+                      : "杩涜涓?}
                 </Text>
               </View>
               <Text
@@ -1915,7 +1953,7 @@ export default function GameScreen() {
       <View style={styles.promptHistorySection}>
         {summaryHistory.length === 0 ? (
           <Text style={[styles.promptHistoryEmpty, { color: colors.muted }]}>
-            暂无总结记录
+            鏆傛棤鎬荤粨璁板綍
           </Text>
         ) : (
           summaryHistory.map((item) => (
@@ -1997,17 +2035,17 @@ export default function GameScreen() {
 
     const fallbackChoices = fallbackChoiceText?.trim()
       ? [
-          `继续执行「${fallbackChoiceText.trim()}」`,
-          "先观察周围情况",
-          "与关键人物对话",
+          `缁х画鎵ц銆?{fallbackChoiceText.trim()}銆峘,
+          "鍏堣瀵熷懆鍥存儏鍐?,
+          "涓庡叧閿汉鐗╁璇?,
         ]
-      : ["继续当前行动", "先观察周围情况", "与关键人物对话"];
+      : ["缁х画褰撳墠琛屽姩", "鍏堣瀵熷懆鍥存儏鍐?, "涓庡叧閿汉鐗╁璇?];
 
     return [
       ...segments,
       {
         type: "choice",
-        text: "接下来你要怎么做？",
+        text: "鎺ヤ笅鏉ヤ綘瑕佹€庝箞鍋氾紵",
         choices: fallbackChoices,
       },
     ];
@@ -2019,7 +2057,7 @@ export default function GameScreen() {
     if (!story || portraitGenerating) return;
     const portraitTaskKey = buildAutoPortraitKey(story.id, card.id);
     if (autoPortraitInFlightRef.current.has(portraitTaskKey)) {
-      Alert.alert("请稍候", `${getCharacterDisplayName(card)} 正在生成形象图`);
+      Alert.alert("璇风◢鍊?, `${getCharacterDisplayName(card)} 姝ｅ湪鐢熸垚褰㈣薄鍥綻);
       return;
     }
     removeAutoPortraitTask(portraitTaskKey);
@@ -2029,14 +2067,14 @@ export default function GameScreen() {
     if (!config.imageApiUrl || !config.imageModel) {
       autoPortraitInFlightRef.current.delete(portraitTaskKey);
       syncImageQueueSnapshot();
-      Alert.alert("未配置生图", "请先在设置中填写图片 API URL 和模型名称");
+      Alert.alert("鏈厤缃敓鍥?, "璇峰厛鍦ㄨ缃腑濉啓鍥剧墖 API URL 鍜屾ā鍨嬪悕绉?);
       return;
     }
     setPortraitGenerating(card.id);
     try {
       const prompt = await generateCharacterPortraitPrompt({
         ...card,
-        gender: card.gender || "未知",
+        gender: card.gender || "鏈煡",
       });
       const uri = await generateImage(prompt);
       if (card.isProtagonist) {
@@ -2052,11 +2090,11 @@ export default function GameScreen() {
         }
       }
       Alert.alert(
-        "生成完成",
-        `${getCharacterDisplayName(card)} 的形象图已生成`,
+        "鐢熸垚瀹屾垚",
+        `${getCharacterDisplayName(card)} 鐨勫舰璞″浘宸茬敓鎴恅,
       );
     } catch (err) {
-      Alert.alert("生成失败", err instanceof Error ? err.message : "未知错误");
+      Alert.alert("鐢熸垚澶辫触", err instanceof Error ? err.message : "鏈煡閿欒");
     } finally {
       autoPortraitInFlightRef.current.delete(portraitTaskKey);
       syncImageQueueSnapshot();
@@ -2066,7 +2104,7 @@ export default function GameScreen() {
   }
 
   // Advance to next segment
-  function handleTap() {
+  async function handleTap() {
     if (!story || !currentSegment) return;
     if (hasUsableChoices) return; // Don't advance on actionable choice segments
     if (!done) {
@@ -2077,20 +2115,15 @@ export default function GameScreen() {
     if (viewIndex < story.segments.length - 1) {
       const next = viewIndex + 1;
       setViewIndex(next);
-      void mutateLatestStory(story.id, (draft) => {
-        draft.currentIndex = Math.max(
-          0,
-          Math.min(next, draft.segments.length - 1),
-        );
-      });
+      await persistCurrentIndex(story.id, next);
     }
   }
 
-  // Handle player choice — with dice mechanics
+  // Handle player choice 鈥?with dice mechanics
   async function handleChoice(choiceText: string, choiceIndex?: number) {
     if (!story || generating) return;
     if (imageGenerating) {
-      Alert.alert("请稍候", "生图进行中，请等待完成后再继续剧情");
+      Alert.alert("璇风◢鍊?, "鐢熷浘杩涜涓紝璇风瓑寰呭畬鎴愬悗鍐嶇户缁墽鎯?);
       return;
     }
     setCustomInput("");
@@ -2098,13 +2131,13 @@ export default function GameScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    if (story.difficulty === "无随机") {
-      // No dice — proceed directly
+    if (story.difficulty === "鏃犻殢鏈?) {
+      // No dice 鈥?proceed directly
       await proceedWithChoice(choiceText);
       return;
     }
 
-    // Determine judgment value — null means no dice check needed
+    // Determine judgment value 鈥?null means no dice check needed
     let judgmentValue: number | null = null;
     if (choiceIndex !== undefined) {
       // Preset choice: use the LLM-assigned value (may be null = no check)
@@ -2112,7 +2145,7 @@ export default function GameScreen() {
       const raw = typeof val === "number" ? val : null;
       judgmentValue = getAffinityAdjustedJudgment(raw, choiceText);
     } else {
-      // Custom action — always request a concrete judgment value
+      // Custom action 鈥?always request a concrete judgment value
       try {
         setGenerating(true);
         judgmentValue = await evaluateCustomAction(
@@ -2176,67 +2209,87 @@ export default function GameScreen() {
 
   async function proceedWithChoice(choiceText: string, dice?: DiceResult) {
     if (!story) return;
-    const workingStory =
-      (await getStory(story.id)) ??
-      ({
-        ...story,
-        segments: [...story.segments],
-        characterCards: story.characterCards.map((card) => ({ ...card })),
-      } as Story);
-    const historyBeforeChoice = workingStory.historyContext;
+    const targetId = story.id;
+    const token = (generationTokenRef.current += 1);
+    activeGenerationRef.current = {
+      token,
+      storyId: targetId,
+      kind: "continue",
+    };
+
+    const historyBeforeChoice = story.historyContext;
 
     // Add a narration segment for the choice made
-    const diceInfo = dice ? ` [🎲 ${dice.roll}/${dice.judgmentValue}]` : "";
+    const diceInfo = dice ? ` [馃幉 ${dice.roll}/${dice.judgmentValue}]` : "";
     const choiceRecord: StorySegment = {
       type: "choice",
-      text: `你选择了：「${choiceText}」${diceInfo}`,
+      text: `浣犻€夋嫨浜嗭細銆?{choiceText}銆?{diceInfo}`,
       choices: [choiceText],
       diceResult: dice,
     };
-    workingStory.segments.push(choiceRecord);
+    story.segments.push(choiceRecord);
     const affinityResult = applyAffinityFromChoice(choiceText, dice?.outcome);
     showAffinityToast(affinityResult.toastText);
     setLastAffinityDebug(affinityResult.debugText);
-    const fullHistory = buildFullHistoryContext(workingStory.segments);
-    const latestHistoryContext = buildHistoryContext(
-      workingStory.segments,
-      workingStory.storySummary,
+    const fullHistory = buildFullHistoryContext(story.segments);
+    const boundedHistory = buildHistoryContextBounded(
+      story.segments,
+      story.storySummary,
+      { maxRecentSegments: 50, maxChars: HISTORY_SUMMARY_TRIGGER_CHARS },
     );
-    const preContinueSummaryTask = createSummaryCompressionTask(workingStory);
+    const latestHistoryContext = boundedHistory.context;
+    const preContinueSummaryTask = createSummaryCompressionTask(story);
 
-    setGenerating(true);
+    // 闃堝€艰Е鍙戞椂绔嬪埢鍚姩鎽樿鍚庡彴鍐欏叆锛岄伩鍏嶄粎鍦ㄧ画鍐欑粨鏉熷悗鎵嶅啓鍏ャ€?    if (preContinueSummaryTask) {
+      void applySummaryCompressionTask(
+        story.id,
+        preContinueSummaryTask,
+        "continue-summary",
+      );
+    }
+
+    // boundedHistory 宸插己鍒舵帶鍒跺瓧绗︿笂闄愶紝閬垮厤鍙戦€佽秴闀?history銆?
+    story.storyGenerationStatus = "generating";
+    story.lastStoryGenerationError = "";
+    await updateStory(story);
+    if (isUiActive(targetId, token)) {
+      setGenerating(true);
+    }
     const requestStartedAt = Date.now();
     try {
       const diceOutcomeCtx = dice
-        ? buildDiceOutcomeContext(dice, workingStory.difficulty, choiceText)
+        ? buildDiceOutcomeContext(dice, story.difficulty, choiceText)
         : undefined;
       const trimmedHistory = latestHistoryContext.trim();
-      const rawChars = fullHistory.trim().length;
+      const rawChars = trimmedHistory.length;
+      const sentSegments = boundedHistory.recentSegmentsIncluded;
+
       setLastSentContextMetrics({
         fullChars: fullHistory.length,
         rawChars,
         sentChars: rawChars,
+        sentSegments,
         truncated: false,
-        pacing: workingStory.currentPacing,
-        minCharsTarget: PACE_MIN_CHARS[workingStory.currentPacing],
+        pacing: story.currentPacing,
+        minCharsTarget: PACE_MIN_CHARS[story.currentPacing],
         generatedChars: 0,
         durationMs: null,
         at: requestStartedAt,
       });
 
       const result = await continueStory({
-        title: workingStory.title,
-        genre: workingStory.genre,
-        premise: workingStory.premise,
+        title: story.title,
+        genre: story.genre,
+        premise: story.premise,
         history: latestHistoryContext,
         choiceText,
-        protagonistName: workingStory.protagonistName ?? "",
-        protagonistDescription: workingStory.protagonistDescription ?? "",
-        protagonistAppearance: workingStory.protagonistAppearance ?? "",
-        difficulty: workingStory.difficulty,
-        pacing: workingStory.currentPacing,
-        characterCards: workingStory.characterCards,
-        continuationFeedback: getRecentContinuationFeedback(workingStory),
+        protagonistName: story.protagonistName ?? "",
+        protagonistGender: story.protagonistGender ?? "鏈煡",
+        protagonistDescription: story.protagonistDescription ?? "",
+        protagonistAppearance: story.protagonistAppearance ?? "",
+        difficulty: story.difficulty,
+        pacing: story.currentPacing,
+        characterCards: story.characterCards,
         diceOutcomeContext: diceOutcomeCtx,
       });
 
@@ -2244,88 +2297,75 @@ export default function GameScreen() {
         ? (result.segments as StorySegment[])
         : [];
       const newSegments = ensureChoiceSegment(generatedSegments, choiceText);
-      workingStory.segments.push(...newSegments);
-      workingStory.currentPacing = result.pacing;
-      workingStory.lastGeneratedChars = result.generatedChars;
-      workingStory.latestGeneratedContext =
-        buildImageContextFromSegments(newSegments);
-      const newIndex = workingStory.segments.length - newSegments.length;
-      workingStory.currentIndex = newIndex;
+      story.segments.push(...newSegments);
+      story.currentPacing = result.pacing;
+      story.lastGeneratedChars = result.generatedChars;
+      story.latestGeneratedContext = buildImageContextFromSegments(newSegments);
+      const newIndex = story.segments.length - newSegments.length;
+      story.currentIndex = newIndex;
 
       // Process new characters
       const newCharacterCardIds = processNewCharacters(
-        workingStory,
+        story,
         result.newCharacters,
       );
-      await applyAIInitialAffinityForNewCharacters(
-        workingStory,
-        result.newCharacters,
-      );
-      applyAutoRevealByStableRealName(workingStory);
+      applyAutoRevealByStableRealName(story);
 
       // Increment choice counter
-      workingStory.choiceCount = (workingStory.choiceCount ?? 0) + 1;
+      story.choiceCount = (story.choiceCount ?? 0) + 1;
 
-      await updateStory(workingStory);
-      if (workingStory.historyContext === historyBeforeChoice) {
+      story.storyGenerationStatus = "idle";
+      story.lastStoryGenerationError = "";
+
+      // 閲嶈锛氬悎骞跺啓鍥烇紝閬垮厤涓庡悗鍙版憳瑕佸啓鍏ヤ簰鐩歌鐩栥€?      const latestStored = await getStory(targetId);
+      const merged = latestStored ?? story;
+      merged.segments = story.segments;
+      merged.currentIndex = story.currentIndex;
+      merged.choiceCount = story.choiceCount;
+      merged.currentPacing = story.currentPacing;
+      merged.lastGeneratedChars = story.lastGeneratedChars;
+      merged.latestGeneratedContext = story.latestGeneratedContext;
+      merged.characterCards = story.characterCards;
+      merged.storyGenerationStatus = story.storyGenerationStatus;
+      merged.lastStoryGenerationError = story.lastStoryGenerationError;
+
+      await updateStory(merged);
+      if (merged.historyContext === historyBeforeChoice) {
         setHistoryStuckCount((count) => count + 1);
       } else {
         setHistoryStuckCount(0);
       }
-      setStory({ ...workingStory });
-      setViewIndex(newIndex);
-      enqueueAutoPortraitGeneration(workingStory.id, newCharacterCardIds);
-      void triggerAutoBackgroundOnChoiceProgress(workingStory.id, choiceText);
-      void (async () => {
-        const evaluation = await evaluateContinuationQuality({
-          title: workingStory.title,
-          genre: workingStory.genre,
-          premise: workingStory.premise,
-          historyBefore: latestHistoryContext,
-          generatedSegments: newSegments,
-        });
-        if (!evaluation || !evaluation.advice.trim()) return;
+      if (isUiActive(targetId, token)) {
+        setStory({ ...merged });
+        setViewIndex(newIndex);
+      }
 
-        const feedbackLine = formatContinuationEvaluationLine({
-          score: evaluation.score,
-          advice: evaluation.advice,
-          issues: evaluation.issues,
-        });
-        const latest = await getStory(workingStory.id);
-        if (!latest) return;
-        const record = {
-          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-          content: feedbackLine,
-          createdAt: Date.now(),
-        };
-        latest.continuationFeedbackHistory = [
-          record,
-          ...(latest.continuationFeedbackHistory ?? []),
-        ].slice(0, 20);
-        await updateStory(latest);
-        if (isMountedRef.current) {
+      // 灏?AI 濂芥劅璇勪及鏀惧埌鍏抽敭璺緞涔嬪锛屽厛杩斿洖鍓ф儏缁撴灉锛屽啀鍚庡彴鍥炲啓瑙掕壊濂芥劅銆?      void (async () => {
+        const latestForAffinity = await getStory(targetId);
+        if (!latestForAffinity) return;
+        await applyAIInitialAffinityForNewCharacters(
+          latestForAffinity,
+          result.newCharacters,
+        );
+        await updateStory(latestForAffinity);
+        if (isUiActive(targetId, token)) {
           setStory((prev) => {
-            if (!prev || prev.id !== latest.id) return prev;
+            if (!prev || prev.id !== latestForAffinity.id) return prev;
             return {
               ...prev,
-              continuationFeedbackHistory: latest.continuationFeedbackHistory,
+              characterCards: latestForAffinity.characterCards,
             };
           });
         }
       })();
 
-      if (preContinueSummaryTask) {
-        void applySummaryCompressionTask(
-          workingStory.id,
-          preContinueSummaryTask,
-          "continue-summary",
-        );
-      } else {
-        const postContinueSummaryTask =
-          createSummaryCompressionTask(workingStory);
+      enqueueAutoPortraitGeneration(story.id, newCharacterCardIds);
+
+      if (!preContinueSummaryTask) {
+        const postContinueSummaryTask = createSummaryCompressionTask(story);
         if (postContinueSummaryTask) {
           void applySummaryCompressionTask(
-            workingStory.id,
+            story.id,
             postContinueSummaryTask,
             "continue-summary",
           );
@@ -2333,32 +2373,47 @@ export default function GameScreen() {
       }
     } catch (err) {
       console.error("Continue failed:", err);
-      Alert.alert("生成失败", err instanceof Error ? err.message : "未知错误");
-      workingStory.segments.pop();
+      story.storyGenerationStatus = "failed";
+      story.lastStoryGenerationError =
+        err instanceof Error ? err.message : "鏈煡閿欒";
+      // 鍥炴粴鏈閫夋嫨璁板綍锛岄伩鍏嶅け璐ユ椂鎶婇€夋嫨娈佃惤鐣欏湪瀛樻。閲屻€?      story.segments.pop();
+
+      const latestStored = await getStory(targetId);
+      const merged = latestStored ?? story;
+      merged.segments = story.segments;
+      merged.currentIndex = story.currentIndex;
+      merged.choiceCount = story.choiceCount;
+      merged.currentPacing = story.currentPacing;
+      merged.lastGeneratedChars = story.lastGeneratedChars;
+      merged.latestGeneratedContext = story.latestGeneratedContext;
+      merged.characterCards = story.characterCards;
+      merged.storyGenerationStatus = story.storyGenerationStatus;
+      merged.lastStoryGenerationError = story.lastStoryGenerationError;
+      await updateStory(merged);
+      if (isUiActive(targetId, token)) {
+        Alert.alert("鐢熸垚澶辫触", story.lastStoryGenerationError);
+      }
     } finally {
       setLastSentContextMetrics((prev) =>
         prev.at === requestStartedAt
           ? {
               ...prev,
-              pacing: workingStory.currentPacing,
-              minCharsTarget: PACE_MIN_CHARS[workingStory.currentPacing],
-              generatedChars: workingStory.lastGeneratedChars,
+              pacing: story.currentPacing,
+              minCharsTarget: PACE_MIN_CHARS[story.currentPacing],
+              generatedChars: story.lastGeneratedChars,
               durationMs: Date.now() - requestStartedAt,
             }
           : prev,
       );
-      setGenerating(false);
+      if (isUiActive(targetId, token)) {
+        setGenerating(false);
+      }
     }
   }
 
-  function handleBack() {
+  async function handleBack() {
     if (story) {
-      void mutateLatestStory(story.id, (draft) => {
-        draft.currentIndex = Math.max(
-          0,
-          Math.min(viewIndex, draft.segments.length - 1),
-        );
-      });
+      await persistCurrentIndex(story.id, viewIndex);
     }
     router.back();
   }
@@ -2371,7 +2426,7 @@ export default function GameScreen() {
     setAutoReadSpeedIndex((prev) => (prev + 1) % AUTO_READ_SPEEDS.length);
   }
 
-  // ─── Render ──────────────────────────────────────────────────────
+  // 鈹€鈹€鈹€ Render 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   if (loading) {
     return (
@@ -2379,7 +2434,7 @@ export default function GameScreen() {
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={[styles.loadingText, { color: colors.muted }]}>
-            加载中...
+            鍔犺浇涓?..
           </Text>
         </View>
       </ScreenContainer>
@@ -2393,10 +2448,7 @@ export default function GameScreen() {
           <ImageBackground
             source={{ uri: backgroundImageUri }}
             style={styles.fullScreenBackground}
-            imageStyle={[
-              styles.sceneBackgroundImage,
-              { transform: [{ scale: backgroundScalePercent / 100 }] },
-            ]}
+            imageStyle={styles.sceneBackgroundImage}
           >
             <View style={styles.fullScreenBackgroundOverlay} />
           </ImageBackground>
@@ -2526,7 +2578,7 @@ export default function GameScreen() {
                       { color: backgroundImageUri ? "#fff" : colors.primary },
                     ]}
                   >
-                    生图
+                    鐢熷浘
                   </Text>
                 )}
               </TouchableOpacity>
@@ -2578,21 +2630,18 @@ export default function GameScreen() {
                   { color: backgroundImageUri ? "#fff" : colors.primary },
                 ]}
               >
-                生图队列 ·
+                鐢熷浘闃熷垪 路
                 {imageQueuePendingCount > 0
-                  ? ` 待处理 ${imageQueuePendingCount}`
+                  ? ` 寰呭鐞?${imageQueuePendingCount}`
                   : imageQueueRunningCount > 0
-                    ? ` 处理中 ${imageQueueRunningCount}`
-                    : " 空闲"}
+                    ? ` 澶勭悊涓?${imageQueueRunningCount}`
+                    : " 绌洪棽"}
               </Text>
             </TouchableOpacity>
           </View>
 
           {/* Scene decoration */}
-          <View
-            style={styles.sceneDecoration}
-            onTouchEnd={handleSceneDecorationTap}
-          >
+          <View style={styles.sceneDecoration}>
             <View
               style={[
                 styles.sceneLine,
@@ -2629,7 +2678,7 @@ export default function GameScreen() {
             <View style={styles.generatingContainer}>
               <ActivityIndicator size="small" color={colors.primary} />
               <Text style={[styles.generatingText, { color: colors.muted }]}>
-                剧情生成中...
+                鍓ф儏鐢熸垚涓?..
               </Text>
             </View>
           ) : currentSegment ? (
@@ -2640,26 +2689,15 @@ export default function GameScreen() {
                   <Animated.View entering={FadeIn.duration(200)}>
                     <View style={styles.dialogueCharacterRow}>
                       {getCardPortraitByName(currentSegment.character) ? (
-                        <TouchableOpacity
-                          onLongPress={() => showScalePanel("character")}
-                          activeOpacity={0.9}
-                        >
-                          <ImageBackground
-                            source={{
-                              uri: getCardPortraitByName(
-                                currentSegment.character,
-                              ),
-                            }}
-                            style={[
-                              styles.dialoguePortrait,
-                              {
-                                width: getScaledSize(56),
-                                height: getScaledSize(56),
-                              },
-                            ]}
-                            imageStyle={{ borderRadius: 10 }}
-                          />
-                        </TouchableOpacity>
+                        <ImageBackground
+                          source={{
+                            uri: getCardPortraitByName(
+                              currentSegment.character,
+                            ),
+                          }}
+                          style={styles.dialoguePortrait}
+                          imageStyle={{ borderRadius: 10 }}
+                        />
                       ) : null}
                       <Text
                         style={[
@@ -2679,8 +2717,7 @@ export default function GameScreen() {
                   <Text
                     style={[styles.narrationLabel, { color: colors.muted }]}
                   >
-                    ——
-                  </Text>
+                    鈥斺€?                  </Text>
                 </Animated.View>
               )}
 
@@ -2700,7 +2737,7 @@ export default function GameScreen() {
                   ]}
                 >
                   {displayed}
-                  {!done && <Text style={{ color: colors.primary }}>▌</Text>}
+                  {!done && <Text style={{ color: colors.primary }}>鈻?/Text>}
                 </Text>
               )}
 
@@ -2711,7 +2748,7 @@ export default function GameScreen() {
                     {currentSegment.text}
                   </Text>
 
-                  {/* Custom action button — keep pinned at top */}
+                  {/* Custom action button 鈥?keep pinned at top */}
                   <Animated.View entering={FadeInDown.delay(60).duration(280)}>
                     <TouchableOpacity
                       onPress={() => setShowCustomInputModal(true)}
@@ -2728,7 +2765,7 @@ export default function GameScreen() {
                       <Text
                         style={[styles.choiceText, { color: colors.muted }]}
                       >
-                        输入自定义行动...
+                        杈撳叆鑷畾涔夎鍔?..
                       </Text>
                     </TouchableOpacity>
                   </Animated.View>
@@ -2775,7 +2812,7 @@ export default function GameScreen() {
                                 >
                                   {choice}
                                 </Text>
-                                {story?.difficulty !== "无随机" &&
+                                {story?.difficulty !== "鏃犻殢鏈? &&
                                   typeof adjustedJudge === "number" && (
                                     <Text
                                       style={[
@@ -2783,7 +2820,7 @@ export default function GameScreen() {
                                         { color: colors.muted },
                                       ]}
                                     >
-                                      难度{adjustedJudge}
+                                      闅惧害{adjustedJudge}
                                     </Text>
                                   )}
                               </View>
@@ -2803,7 +2840,7 @@ export default function GameScreen() {
                   style={styles.tapIndicator}
                 >
                   <Text style={[styles.tapText, { color: colors.muted }]}>
-                    ▼ 点击继续
+                    鈻?鐐瑰嚮缁х画
                   </Text>
                 </Animated.View>
               )}
@@ -2811,85 +2848,6 @@ export default function GameScreen() {
           ) : null}
         </TouchableOpacity>
       </View>
-
-      {scalePanelVisible ? (
-        <View style={styles.scalePanelAnchor} pointerEvents="box-none">
-          <View style={styles.scalePanelCard}>
-            <View style={styles.scalePanelTabs}>
-              <TouchableOpacity
-                onPress={() => showScalePanel("background")}
-                style={[
-                  styles.scalePanelTab,
-                  scalePanelMode === "background" && styles.scalePanelTabActive,
-                ]}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.scalePanelTabText}>背景</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => showScalePanel("character")}
-                style={[
-                  styles.scalePanelTab,
-                  scalePanelMode === "character" && styles.scalePanelTabActive,
-                ]}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.scalePanelTabText}>人物</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View
-              style={styles.scalePanelTrack}
-              onStartShouldSetResponder={() => true}
-              onMoveShouldSetResponder={() => true}
-              onResponderGrant={(event) => {
-                applyScaleFromTrack(
-                  scalePanelMode,
-                  event.nativeEvent.locationY,
-                );
-              }}
-              onResponderMove={(event) => {
-                applyScaleFromTrack(
-                  scalePanelMode,
-                  event.nativeEvent.locationY,
-                );
-              }}
-            >
-              <View
-                style={[
-                  styles.scalePanelThumb,
-                  {
-                    bottom:
-                      ((getScalePercentByMode(scalePanelMode) - 50) / 100) *
-                      (BG_SCALE_TRACK_HEIGHT - 14),
-                  },
-                ]}
-              />
-            </View>
-
-            <Text style={styles.scalePanelValue}>
-              {getScalePercentByMode(scalePanelMode)}%
-            </Text>
-
-            <View style={styles.scalePanelQuickRow}>
-              {BG_SCALE_PRESETS.map((value) => (
-                <TouchableOpacity
-                  key={value}
-                  onPress={() => updateScaleByMode(scalePanelMode, value)}
-                  style={[
-                    styles.scalePanelQuickItem,
-                    value === getScalePercentByMode(scalePanelMode) &&
-                      styles.scalePanelQuickItemActive,
-                  ]}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.scalePanelQuickText}>{value}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        </View>
-      ) : null}
 
       {/* Menu Modal */}
       <Modal visible={showMenu} transparent animationType="fade">
@@ -2902,7 +2860,7 @@ export default function GameScreen() {
             style={[styles.menuContainer, { backgroundColor: colors.surface }]}
           >
             <Text style={[styles.menuTitle, { color: colors.foreground }]}>
-              菜单
+              鑿滃崟
             </Text>
             <TouchableOpacity
               onPress={() => {
@@ -2918,7 +2876,7 @@ export default function GameScreen() {
                 color={colors.foreground}
               />
               <Text style={[styles.menuItemText, { color: colors.foreground }]}>
-                历史对话
+                鍘嗗彶瀵硅瘽
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2935,7 +2893,7 @@ export default function GameScreen() {
                 color={colors.foreground}
               />
               <Text style={[styles.menuItemText, { color: colors.foreground }]}>
-                角色卡片 ({story?.characterCards?.length ?? 0})
+                瑙掕壊鍗＄墖 ({story?.characterCards?.length ?? 0})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2952,7 +2910,7 @@ export default function GameScreen() {
                 color={colors.foreground}
               />
               <Text style={[styles.menuItemText, { color: colors.foreground }]}>
-                故事总结 ({story?.summaryHistory?.length ?? 0})
+                鏁呬簨鎬荤粨 ({story?.summaryHistory?.length ?? 0})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2969,7 +2927,7 @@ export default function GameScreen() {
                 color={colors.foreground}
               />
               <Text style={[styles.menuItemText, { color: colors.foreground }]}>
-                历史生图提示词 ({story?.imagePromptHistory?.length ?? 0})
+                鍘嗗彶鐢熷浘鎻愮ず璇?({story?.imagePromptHistory?.length ?? 0})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2986,7 +2944,7 @@ export default function GameScreen() {
                 color={colors.foreground}
               />
               <Text style={[styles.menuItemText, { color: colors.foreground }]}>
-                返回首页
+                杩斿洖棣栭〉
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2996,7 +2954,7 @@ export default function GameScreen() {
             >
               <IconSymbol name="xmark" size={20} color={colors.muted} />
               <Text style={[styles.menuItemText, { color: colors.muted }]}>
-                关闭
+                鍏抽棴
               </Text>
             </TouchableOpacity>
           </View>
@@ -3008,13 +2966,13 @@ export default function GameScreen() {
         <View style={styles.diceModalOverlay}>
           <View style={styles.diceModalContent}>
             <Text style={styles.diceLabel}>
-              {diceSettled ? "判定结果" : "掷骰中..."}
+              {diceSettled ? "鍒ゅ畾缁撴灉" : "鎺烽涓?.."}
             </Text>
             <Text style={styles.diceNumber}>{diceDisplayValue}</Text>
             {diceSettled && diceResult && (
               <>
                 <Text style={styles.diceJudgment}>
-                  判定值: {diceResult.judgmentValue}
+                  鍒ゅ畾鍊? {diceResult.judgmentValue}
                 </Text>
                 <Text
                   style={[
@@ -3030,10 +2988,10 @@ export default function GameScreen() {
                   ]}
                 >
                   {diceResult.outcome === "better"
-                    ? "超越预期!"
+                    ? "瓒呰秺棰勬湡!"
                     : diceResult.outcome === "exact"
-                      ? "恰好达成"
-                      : "未达预期..."}
+                      ? "鎭板ソ杈炬垚"
+                      : "鏈揪棰勬湡..."}
                 </Text>
               </>
             )}
@@ -3063,8 +3021,7 @@ export default function GameScreen() {
             <Text
               style={[styles.customModalTitle, { color: colors.foreground }]}
             >
-              自定义行动
-            </Text>
+              鑷畾涔夎鍔?            </Text>
             <TextInput
               style={[
                 styles.customModalInput,
@@ -3074,7 +3031,7 @@ export default function GameScreen() {
                   backgroundColor: colors.background,
                 },
               ]}
-              placeholder="描述你想做的事情..."
+              placeholder="鎻忚堪浣犳兂鍋氱殑浜嬫儏..."
               placeholderTextColor={colors.muted}
               value={customInput}
               onChangeText={setCustomInput}
@@ -3095,7 +3052,7 @@ export default function GameScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={{ color: colors.foreground, fontWeight: "600" }}>
-                  取消
+                  鍙栨秷
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -3123,7 +3080,7 @@ export default function GameScreen() {
                     fontWeight: "600",
                   }}
                 >
-                  确认行动
+                  纭琛屽姩
                 </Text>
               </TouchableOpacity>
             </View>
@@ -3141,7 +3098,7 @@ export default function GameScreen() {
             ]}
           >
             <Text style={[styles.menuTitle, { color: colors.foreground }]}>
-              确认选择
+              纭閫夋嫨
             </Text>
             <Text
               style={[styles.choiceConfirmText, { color: colors.foreground }]}
@@ -3157,7 +3114,7 @@ export default function GameScreen() {
                 ]}
               >
                 <Text style={{ color: colors.foreground, fontWeight: "600" }}>
-                  取消
+                  鍙栨秷
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -3167,7 +3124,7 @@ export default function GameScreen() {
                   { backgroundColor: colors.primary },
                 ]}
               >
-                <Text style={{ color: "#fff", fontWeight: "700" }}>确认</Text>
+                <Text style={{ color: "#fff", fontWeight: "700" }}>纭</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -3183,7 +3140,7 @@ export default function GameScreen() {
             style={[styles.historyHeader, { borderBottomColor: colors.border }]}
           >
             <Text style={[styles.historyTitle, { color: colors.foreground }]}>
-              角色卡片 ({displayCards.length})
+              瑙掕壊鍗＄墖 ({displayCards.length})
             </Text>
             <TouchableOpacity
               onPress={() => {
@@ -3201,8 +3158,7 @@ export default function GameScreen() {
             contentContainerStyle={styles.historyList}
             ListEmptyComponent={
               <Text style={[styles.emptyText, { color: colors.muted }]}>
-                暂无角色卡片，随着剧情推进会自动生成
-              </Text>
+                鏆傛棤瑙掕壊鍗＄墖锛岄殢鐫€鍓ф儏鎺ㄨ繘浼氳嚜鍔ㄧ敓鎴?              </Text>
             }
             renderItem={({ item }) => {
               const isProtagonist = (item as any).isProtagonist === true;
@@ -3235,8 +3191,7 @@ export default function GameScreen() {
                       <Text
                         style={[styles.characterField, { color: colors.muted }]}
                       >
-                        外貌：
-                      </Text>
+                        澶栬矊锛?                      </Text>
                       <TextInput
                         style={[
                           styles.customModalInput,
@@ -3255,8 +3210,7 @@ export default function GameScreen() {
                       <Text
                         style={[styles.characterField, { color: colors.muted }]}
                       >
-                        性格：
-                      </Text>
+                        鎬ф牸锛?                      </Text>
                       <TextInput
                         style={[
                           styles.customModalInput,
@@ -3275,8 +3229,7 @@ export default function GameScreen() {
                       <Text
                         style={[styles.characterField, { color: colors.muted }]}
                       >
-                        背景：
-                      </Text>
+                        鑳屾櫙锛?                      </Text>
                       <TextInput
                         style={[
                           styles.customModalInput,
@@ -3307,7 +3260,7 @@ export default function GameScreen() {
                               fontWeight: "600",
                             }}
                           >
-                            取消
+                            鍙栨秷
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
@@ -3333,7 +3286,7 @@ export default function GameScreen() {
                           activeOpacity={0.7}
                         >
                           <Text style={{ color: "#fff", fontWeight: "600" }}>
-                            保存
+                            淇濆瓨
                           </Text>
                         </TouchableOpacity>
                       </View>
@@ -3356,20 +3309,13 @@ export default function GameScreen() {
                               name: getCharacterDisplayName(item),
                             });
                           }}
-                          onLongPress={() => showScalePanel("character")}
                           disabled={portraitGenerating === item.id}
                           activeOpacity={0.7}
                         >
                           {item.portraitUri ? (
                             <ImageBackground
                               source={{ uri: item.portraitUri }}
-                              style={[
-                                styles.portraitImage,
-                                {
-                                  width: getScaledSize(60),
-                                  height: getScaledSize(60),
-                                },
-                              ]}
+                              style={styles.portraitImage}
                               imageStyle={{ borderRadius: 10 }}
                             />
                           ) : (
@@ -3411,7 +3357,7 @@ export default function GameScreen() {
                               ]}
                             >
                               {getCharacterDisplayName(item)}
-                              {isProtagonist ? " · 主角" : ""}
+                              {isProtagonist ? " 路 涓昏" : ""}
                             </Text>
                             <Text
                               style={[
@@ -3427,7 +3373,7 @@ export default function GameScreen() {
                                 { color: colors.primary, marginLeft: 8 },
                               ]}
                             >
-                              好感度 {item.affinity}/100
+                              濂芥劅搴?{item.affinity}/100
                             </Text>
                           </View>
                           {item.appearance ? (
@@ -3437,7 +3383,7 @@ export default function GameScreen() {
                                 { color: colors.foreground },
                               ]}
                             >
-                              外貌：{item.appearance}
+                              澶栬矊锛歿item.appearance}
                             </Text>
                           ) : null}
                         </View>
@@ -3448,8 +3394,7 @@ export default function GameScreen() {
                           { color: colors.foreground },
                         ]}
                       >
-                        性格：
-                        {isProtagonist
+                        鎬ф牸锛?                        {isProtagonist
                           ? item.personality
                           : getUnlockedTextByAffinity(
                               item.personality,
@@ -3459,8 +3404,7 @@ export default function GameScreen() {
                       <Text
                         style={[styles.characterField, { color: colors.muted }]}
                       >
-                        背景：
-                        {isProtagonist
+                        鑳屾櫙锛?                        {isProtagonist
                           ? item.background
                           : getUnlockedTextByAffinity(
                               item.background,
@@ -3475,7 +3419,7 @@ export default function GameScreen() {
                               { color: colors.muted },
                             ]}
                           >
-                            已参与事件：
+                            宸插弬涓庝簨浠讹細
                           </Text>
                           <View style={styles.involvedChipsRow}>
                             {involvedEvents.map((evt, idx) => (
@@ -3508,10 +3452,10 @@ export default function GameScreen() {
                             style={{ color: colors.primary, fontWeight: "600" }}
                           >
                             {portraitGenerating === item.id
-                              ? "生成中..."
+                              ? "鐢熸垚涓?.."
                               : item.portraitUri
-                                ? "重新生成形象"
-                                : "生成形象"}
+                                ? "閲嶆柊鐢熸垚褰㈣薄"
+                                : "鐢熸垚褰㈣薄"}
                           </Text>
                         </TouchableOpacity>
                         {!isProtagonist && (
@@ -3529,7 +3473,7 @@ export default function GameScreen() {
                                 fontWeight: "600",
                               }}
                             >
-                              编辑
+                              缂栬緫
                             </Text>
                           </TouchableOpacity>
                         )}
@@ -3537,31 +3481,21 @@ export default function GameScreen() {
                           <TouchableOpacity
                             onPress={() => {
                               Alert.alert(
-                                "删除角色",
-                                `确定删除「${getCharacterDisplayName(item)}」的角色卡片吗？`,
+                                "鍒犻櫎瑙掕壊",
+                                `纭畾鍒犻櫎銆?{getCharacterDisplayName(item)}銆嶇殑瑙掕壊鍗＄墖鍚楋紵`,
                                 [
-                                  { text: "取消", style: "cancel" },
+                                  { text: "鍙栨秷", style: "cancel" },
                                   {
-                                    text: "删除",
+                                    text: "鍒犻櫎",
                                     style: "destructive",
                                     onPress: () => {
                                       if (story) {
-                                        void mutateLatestStory(
-                                          story.id,
-                                          (draft) => {
-                                            draft.characterCards =
-                                              draft.characterCards.filter(
-                                                (c) => c.id !== item.id,
-                                              );
-                                          },
-                                        ).then((updated) => {
-                                          if (!updated) return;
-                                          setStory((prev) =>
-                                            prev && prev.id === updated.id
-                                              ? { ...updated }
-                                              : prev,
+                                        story.characterCards =
+                                          story.characterCards.filter(
+                                            (c) => c.id !== item.id,
                                           );
-                                        });
+                                        updateStory(story);
+                                        setStory({ ...story });
                                       }
                                     },
                                   },
@@ -3572,7 +3506,7 @@ export default function GameScreen() {
                             <Text
                               style={{ color: "#ef4444", fontWeight: "600" }}
                             >
-                              删除
+                              鍒犻櫎
                             </Text>
                           </TouchableOpacity>
                         )}
@@ -3612,10 +3546,7 @@ export default function GameScreen() {
             {portraitPreview?.uri ? (
               <Image
                 source={{ uri: portraitPreview.uri }}
-                style={[
-                  styles.portraitPreviewImage,
-                  { maxWidth: Math.round(420 * characterScaleFactor) },
-                ]}
+                style={styles.portraitPreviewImage}
                 resizeMode="contain"
               />
             ) : null}
@@ -3632,8 +3563,7 @@ export default function GameScreen() {
             style={[styles.historyHeader, { borderBottomColor: colors.border }]}
           >
             <Text style={[styles.historyTitle, { color: colors.foreground }]}>
-              历史生图提示词
-            </Text>
+              鍘嗗彶鐢熷浘鎻愮ず璇?            </Text>
             <TouchableOpacity
               onPress={() => setShowPromptHistory(false)}
               activeOpacity={0.7}
@@ -3665,7 +3595,7 @@ export default function GameScreen() {
             style={[styles.historyHeader, { borderBottomColor: colors.border }]}
           >
             <Text style={[styles.historyTitle, { color: colors.foreground }]}>
-              故事总结
+              鏁呬簨鎬荤粨
             </Text>
             <TouchableOpacity
               onPress={() => setShowSummaryHistory(false)}
@@ -3698,7 +3628,7 @@ export default function GameScreen() {
             style={[styles.historyHeader, { borderBottomColor: colors.border }]}
           >
             <Text style={[styles.historyTitle, { color: colors.foreground }]}>
-              生图队列
+              鐢熷浘闃熷垪
             </Text>
             <TouchableOpacity
               onPress={() => setShowImageQueue(false)}
@@ -3724,7 +3654,7 @@ export default function GameScreen() {
                     { color: colors.muted },
                   ]}
                 >
-                  背景队列
+                  鑳屾櫙闃熷垪
                 </Text>
                 <Text
                   style={[
@@ -3739,10 +3669,10 @@ export default function GameScreen() {
                   ]}
                 >
                   {imageQueueSnapshot.backgroundInFlight
-                    ? "生成中"
+                    ? "鐢熸垚涓?
                     : imageQueueSnapshot.backgroundPending.length > 0
-                      ? `等待 ${imageQueueSnapshot.backgroundPending.length}`
-                      : "空闲"}
+                      ? `绛夊緟 ${imageQueueSnapshot.backgroundPending.length}`
+                      : "绌洪棽"}
                 </Text>
               </View>
               <View
@@ -3760,7 +3690,7 @@ export default function GameScreen() {
                     { color: colors.muted },
                   ]}
                 >
-                  角色队列
+                  瑙掕壊闃熷垪
                 </Text>
                 <Text
                   style={[
@@ -3775,10 +3705,10 @@ export default function GameScreen() {
                   ]}
                 >
                   {imageQueueSnapshot.portraitInFlight.length > 0
-                    ? `生成中 ${imageQueueSnapshot.portraitInFlight.length}`
+                    ? `鐢熸垚涓?${imageQueueSnapshot.portraitInFlight.length}`
                     : imageQueueSnapshot.portraitPending.length > 0
-                      ? `等待 ${imageQueueSnapshot.portraitPending.length}`
-                      : "空闲"}
+                      ? `绛夊緟 ${imageQueueSnapshot.portraitPending.length}`
+                      : "绌洪棽"}
                 </Text>
               </View>
             </View>
@@ -3790,14 +3720,13 @@ export default function GameScreen() {
                   { color: colors.foreground },
                 ]}
               >
-                背景图待处理任务
+                鑳屾櫙鍥惧緟澶勭悊浠诲姟
               </Text>
               {imageQueueSnapshot.backgroundPending.length === 0 ? (
                 <Text
                   style={[styles.promptHistoryEmpty, { color: colors.muted }]}
                 >
-                  暂无背景图等待任务
-                </Text>
+                  鏆傛棤鑳屾櫙鍥剧瓑寰呬换鍔?                </Text>
               ) : (
                 imageQueueSnapshot.backgroundPending.map((item, index) => (
                   <View
@@ -3848,14 +3777,13 @@ export default function GameScreen() {
                   { color: colors.foreground },
                 ]}
               >
-                角色图生成中
+                瑙掕壊鍥剧敓鎴愪腑
               </Text>
               {imageQueueSnapshot.portraitInFlight.length === 0 ? (
                 <Text
                   style={[styles.promptHistoryEmpty, { color: colors.muted }]}
                 >
-                  当前没有正在生图的角色
-                </Text>
+                  褰撳墠娌℃湁姝ｅ湪鐢熷浘鐨勮鑹?                </Text>
               ) : (
                 imageQueueSnapshot.portraitInFlight.map((item) => (
                   <View
@@ -3875,8 +3803,7 @@ export default function GameScreen() {
                           { color: colors.primary },
                         ]}
                       >
-                        处理中
-                      </Text>
+                        澶勭悊涓?                      </Text>
                       <Text
                         style={[
                           styles.promptHistoryTime,
@@ -3906,14 +3833,13 @@ export default function GameScreen() {
                   { color: colors.foreground },
                 ]}
               >
-                角色图待处理任务
+                瑙掕壊鍥惧緟澶勭悊浠诲姟
               </Text>
               {imageQueueSnapshot.portraitPending.length === 0 ? (
                 <Text
                   style={[styles.promptHistoryEmpty, { color: colors.muted }]}
                 >
-                  暂无角色图等待任务
-                </Text>
+                  鏆傛棤瑙掕壊鍥剧瓑寰呬换鍔?                </Text>
               ) : (
                 imageQueueSnapshot.portraitPending.map((item, index) => (
                   <View
@@ -3969,7 +3895,7 @@ export default function GameScreen() {
             style={[styles.historyHeader, { borderBottomColor: colors.border }]}
           >
             <Text style={[styles.historyTitle, { color: colors.foreground }]}>
-              历史对话
+              鍘嗗彶瀵硅瘽
             </Text>
             <TouchableOpacity
               onPress={() => setShowHistory(false)}
@@ -4003,7 +3929,7 @@ export default function GameScreen() {
                       { color: colors.muted },
                     ]}
                   >
-                    旁白
+                    鏃佺櫧
                   </Text>
                 )}
                 {item.type === "choice" && (
@@ -4013,17 +3939,17 @@ export default function GameScreen() {
                       { color: colors.warning },
                     ]}
                   >
-                    选择
+                    閫夋嫨
                   </Text>
                 )}
-                {item.text.startsWith("你选择了") && (
+                {item.text.startsWith("浣犻€夋嫨浜?) && (
                   <Text
                     style={[
                       styles.historyNarrationLabel,
                       { color: colors.warning },
                     ]}
                   >
-                    玩家选择
+                    鐜╁閫夋嫨
                   </Text>
                 )}
                 <Text
@@ -4047,6 +3973,7 @@ export default function GameScreen() {
         currentFullChars={currentFullHistoryChars}
         currentRawChars={currentHistoryChars}
         currentSentChars={currentSentChars}
+        currentSentSegments={currentSentSegments}
         currentTruncated={currentTruncated}
         currentPacing={currentPacing}
         currentMinCharsTarget={currentMinCharsTarget}
@@ -4065,6 +3992,7 @@ function ContextMonitor({
   currentFullChars,
   currentRawChars,
   currentSentChars,
+  currentSentSegments,
   currentTruncated,
   currentPacing,
   currentMinCharsTarget,
@@ -4078,6 +4006,7 @@ function ContextMonitor({
   currentFullChars: number;
   currentRawChars: number;
   currentSentChars: number;
+  currentSentSegments: number;
   currentTruncated: boolean;
   currentPacing: keyof typeof PACE_MIN_CHARS;
   currentMinCharsTarget: number;
@@ -4088,7 +4017,12 @@ function ContextMonitor({
   lastAffinityDebug: string;
 }) {
   const [pressing, setPressing] = useState(false);
-  const progress = Math.min(currentSentChars / threshold, 1);
+  const segmentsLimit = 50;
+  const effectiveChars =
+    currentSentChars >= threshold && currentSentChars % threshold === 0
+      ? threshold
+      : currentSentChars % threshold;
+  const progress = Math.min(effectiveChars / threshold, 1);
   const progressColor =
     progress >= 1 ? "#ef4444" : progress >= 0.75 ? "#f59e0b" : "#22c55e";
 
@@ -4112,19 +4046,23 @@ function ContextMonitor({
         <View style={styles.contextMonitorPanel}>
           <Text style={styles.contextMonitorTitle}>Debug Context</Text>
           <Text style={styles.contextMonitorText}>
-            全量剧情: {currentFullChars}
+            鍏ㄩ噺鍓ф儏: {currentFullChars}
           </Text>
           <Text style={styles.contextMonitorText}>
-            当前节奏: {currentPacing}
+            褰撳墠鑺傚: {currentPacing}
           </Text>
           <Text style={styles.contextMonitorText}>
-            本轮下限: {currentMinCharsTarget} / 已生成: {currentGeneratedChars}
+            鏈疆涓嬮檺: {currentMinCharsTarget} / 宸茬敓鎴? {currentGeneratedChars}
           </Text>
           <Text style={styles.contextMonitorText}>
-            当前记忆: {currentRawChars} / {threshold}
+            褰撳墠璁板繂: {currentRawChars} / {threshold}
           </Text>
           <Text style={styles.contextMonitorText}>
-            实际发送: {currentSentChars} {currentTruncated ? "(已截断)" : ""}
+            瀹為檯鍙戦€? {currentSentChars} {currentTruncated ? "(宸叉埅鏂?" : ""}
+          </Text>
+          <Text style={styles.contextMonitorText}>
+            鍙戦€佹钀? {Math.min(currentSentSegments, segmentsLimit)} /{" "}
+            {segmentsLimit}
           </Text>
           <View style={styles.contextMonitorBarBg}>
             <View
@@ -4138,19 +4076,23 @@ function ContextMonitor({
             />
           </View>
           <Text style={styles.contextMonitorText}>
-            最近发送: {lastSentMetrics.sentChars}
-            {lastSentMetrics.truncated ? " (截断)" : ""}
+            鏈€杩戝彂閫? {lastSentMetrics.sentChars}
+            {lastSentMetrics.truncated ? " (鎴柇)" : ""}
           </Text>
           <Text style={styles.contextMonitorText}>
-            最近全量: {lastSentMetrics.fullChars}
+            鏈€杩戞钀? {Math.min(lastSentMetrics.sentSegments, segmentsLimit)} /{" "}
+            {segmentsLimit}
           </Text>
           <Text style={styles.contextMonitorText}>
-            最近节奏: {lastSentMetrics.pacing} ({lastSentMetrics.generatedChars}
+            鏈€杩戝叏閲? {lastSentMetrics.fullChars}
+          </Text>
+          <Text style={styles.contextMonitorText}>
+            鏈€杩戣妭濂? {lastSentMetrics.pacing} ({lastSentMetrics.generatedChars}
             /{lastSentMetrics.minCharsTarget})
           </Text>
           <Text style={styles.contextMonitorText}>
-            最近耗时: {lastSentMetrics.durationMs ?? 0}ms{" "}
-            {generating ? "(生成中)" : ""}
+            鏈€杩戣€楁椂: {lastSentMetrics.durationMs ?? 0}ms{" "}
+            {generating ? "(鐢熸垚涓?" : ""}
           </Text>
           <Text
             style={[
@@ -4158,10 +4100,10 @@ function ContextMonitor({
               historyStuckCount > 0 && { color: "#f59e0b" },
             ]}
           >
-            上下文停滞: {historyStuckCount}
+            涓婁笅鏂囧仠婊? {historyStuckCount}
           </Text>
           <Text style={styles.contextMonitorText}>
-            最近好感: {lastAffinityDebug}
+            鏈€杩戝ソ鎰? {lastAffinityDebug}
           </Text>
         </View>
       )}
@@ -4792,149 +4734,5 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: 999,
   },
-  bgScaleSidebar: {
-    position: "absolute",
-    right: 6,
-    top: "22%",
-    zIndex: 25,
-  },
-  bgScalePanel: {
-    width: 52,
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    alignItems: "center",
-    backgroundColor: "rgba(17,24,39,0.75)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.25)",
-    gap: 6,
-  },
-  bgScaleTitle: {
-    color: "#f9fafb",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  bgScaleTrack: {
-    width: 16,
-    height: BG_SCALE_TRACK_HEIGHT,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    position: "relative",
-  },
-  bgScaleThumb: {
-    position: "absolute",
-    left: 1,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#f8fafc",
-  },
-  bgScaleValue: {
-    color: "#f9fafb",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  bgScaleQuickRow: {
-    width: "100%",
-    gap: 4,
-  },
-  bgScaleQuickItem: {
-    width: "100%",
-    alignItems: "center",
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.25)",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    paddingVertical: 2,
-  },
-  bgScaleQuickItemActive: {
-    backgroundColor: "rgba(59,130,246,0.35)",
-    borderColor: "rgba(147,197,253,0.9)",
-  },
-  bgScaleQuickText: {
-    color: "#e5e7eb",
-    fontSize: 9,
-    fontWeight: "700",
-  },
-  scalePanelAnchor: {
-    position: "absolute",
-    right: 12,
-    top: 92,
-    zIndex: 30,
-  },
-  scalePanelCard: {
-    width: 58,
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    alignItems: "center",
-    backgroundColor: "rgba(15,23,42,0.75)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
-    gap: 6,
-  },
-  scalePanelTabs: {
-    width: "100%",
-    gap: 4,
-  },
-  scalePanelTab: {
-    width: "100%",
-    alignItems: "center",
-    borderRadius: 7,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    paddingVertical: 3,
-  },
-  scalePanelTabActive: {
-    borderColor: "rgba(125,211,252,0.95)",
-    backgroundColor: "rgba(14,165,233,0.34)",
-  },
-  scalePanelTabText: {
-    color: "#f8fafc",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  scalePanelTrack: {
-    width: 16,
-    height: BG_SCALE_TRACK_HEIGHT,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    position: "relative",
-  },
-  scalePanelThumb: {
-    position: "absolute",
-    left: 1,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#f8fafc",
-  },
-  scalePanelValue: {
-    color: "#f9fafb",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  scalePanelQuickRow: {
-    width: "100%",
-    gap: 4,
-  },
-  scalePanelQuickItem: {
-    width: "100%",
-    alignItems: "center",
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.25)",
-    backgroundColor: "rgba(255,255,255,0.08)",
-    paddingVertical: 2,
-  },
-  scalePanelQuickItemActive: {
-    backgroundColor: "rgba(59,130,246,0.35)",
-    borderColor: "rgba(147,197,253,0.9)",
-  },
-  scalePanelQuickText: {
-    color: "#e5e7eb",
-    fontSize: 9,
-    fontWeight: "700",
-  },
 });
+

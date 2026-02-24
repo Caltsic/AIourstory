@@ -1,5 +1,5 @@
 ﻿import { randomUUID } from "node:crypto";
-import { eq, and, like, desc, sql, or } from "drizzle-orm";
+import { eq, and, like, desc, sql, or, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { storySettings, users, likes, downloads } from "../db/schema.js";
 import { badRequest, notFound, forbidden } from "../utils/errors.js";
@@ -33,10 +33,20 @@ export async function list(params: ListParams) {
 
   const whereList = [eq(storySettings.status, "approved")];
   if (search) {
-    whereList.push(or(like(storySettings.title, `%${search}%`), like(storySettings.premise, `%${search}%`))!);
+    whereList.push(
+      or(
+        like(storySettings.title, `%${search}%`),
+        like(storySettings.premise, `%${search}%`),
+      )!,
+    );
   }
   if (genre) {
     whereList.push(eq(storySettings.genre, genre));
+  }
+  if (tags && tags.length > 0) {
+    whereList.push(
+      or(...tags.map((tag) => like(storySettings.tags, `%"${tag}"%`)))!,
+    );
   }
 
   const whereClause = whereList.length === 1 ? whereList[0] : and(...whereList);
@@ -60,9 +70,12 @@ export async function list(params: ListParams) {
       downloadCount: storySettings.downloadCount,
       likeCount: storySettings.likeCount,
       createdAt: storySettings.createdAt,
-      authorId: storySettings.authorId,
+      authorUuid: users.uuid,
+      authorNickname: users.nickname,
+      authorAvatarSeed: users.avatarSeed,
     })
     .from(storySettings)
+    .leftJoin(users, eq(users.id, storySettings.authorId))
     .where(whereClause)
     .orderBy(orderBy)
     .limit(limit)
@@ -75,63 +88,65 @@ export async function list(params: ListParams) {
     .get();
   const total = countResult?.count ?? 0;
 
-  const items = await Promise.all(
-    rows.map(async (item) => {
-      const itemTags = safeJsonArray(item.tags);
-      if (tags && tags.length > 0 && !tags.some((tag) => itemTags.includes(tag))) {
-        return null;
-      }
+  let likedIdSet = new Set<number>();
+  if (currentUserId && rows.length > 0) {
+    const likeRows = await db
+      .select({ targetId: likes.targetId })
+      .from(likes)
+      .where(
+        and(
+          eq(likes.userId, currentUserId),
+          eq(likes.targetType, "story"),
+          inArray(
+            likes.targetId,
+            rows.map((item) => item.id),
+          ),
+        ),
+      );
+    likedIdSet = new Set(likeRows.map((row) => row.targetId));
+  }
 
-      const author = await db
-        .select({ uuid: users.uuid, nickname: users.nickname, avatarSeed: users.avatarSeed })
-        .from(users)
-        .where(eq(users.id, item.authorId))
-        .get();
+  const items = rows.map((item) => ({
+    uuid: item.uuid,
+    title: item.title,
+    premise:
+      item.premise.length > 100
+        ? `${item.premise.slice(0, 100)}...`
+        : item.premise,
+    genre: item.genre,
+    protagonistName: item.protagonistName,
+    difficulty: item.difficulty,
+    tags: safeJsonArray(item.tags),
+    downloadCount: item.downloadCount,
+    likeCount: item.likeCount,
+    isLiked: likedIdSet.has(item.id),
+    createdAt: item.createdAt,
+    author: {
+      uuid: item.authorUuid ?? "",
+      nickname: item.authorNickname ?? "未知",
+      avatarSeed: item.authorAvatarSeed ?? "",
+    },
+  }));
 
-      let isLiked = false;
-      if (currentUserId) {
-        const likeRecord = await db
-          .select({ id: likes.id })
-          .from(likes)
-          .where(
-            and(
-              eq(likes.userId, currentUserId),
-              eq(likes.targetType, "story"),
-              eq(likes.targetId, item.id)
-            )
-          )
-          .get();
-        isLiked = Boolean(likeRecord);
-      }
-
-      return {
-        uuid: item.uuid,
-        title: item.title,
-        premise: item.premise.length > 100 ? `${item.premise.slice(0, 100)}...` : item.premise,
-        genre: item.genre,
-        protagonistName: item.protagonistName,
-        difficulty: item.difficulty,
-        tags: itemTags,
-        downloadCount: item.downloadCount,
-        likeCount: item.likeCount,
-        isLiked,
-        createdAt: item.createdAt,
-        author: author ?? { uuid: "", nickname: "未知", avatarSeed: "" },
-      };
-    })
-  );
-
-  return { items: items.filter(Boolean), total, page, limit };
+  return { items, total, page, limit };
 }
 
 export async function getByUuid(uuid: string, currentUserId?: number) {
-  const story = await db.select().from(storySettings).where(eq(storySettings.uuid, uuid)).get();
+  const story = await db
+    .select()
+    .from(storySettings)
+    .where(eq(storySettings.uuid, uuid))
+    .get();
   if (!story || story.status !== "approved") {
     throw notFound("故事设置不存在");
   }
 
   const author = await db
-    .select({ uuid: users.uuid, nickname: users.nickname, avatarSeed: users.avatarSeed })
+    .select({
+      uuid: users.uuid,
+      nickname: users.nickname,
+      avatarSeed: users.avatarSeed,
+    })
     .from(users)
     .where(eq(users.id, story.authorId))
     .get();
@@ -145,8 +160,8 @@ export async function getByUuid(uuid: string, currentUserId?: number) {
         and(
           eq(likes.userId, currentUserId),
           eq(likes.targetType, "story"),
-          eq(likes.targetId, story.id)
-        )
+          eq(likes.targetId, story.id),
+        ),
       )
       .get();
     isLiked = Boolean(likeRecord);
@@ -186,7 +201,7 @@ export async function create(
     initialPacing?: string;
     extraDescription?: string;
     tags?: string[];
-  }
+  },
 ) {
   const author = await getUserByUuid(authorUuid);
   if (!author) {
@@ -228,9 +243,13 @@ export async function create(
 export async function update(
   storyUuid: string,
   authorUuid: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
 ) {
-  const story = await db.select().from(storySettings).where(eq(storySettings.uuid, storyUuid)).get();
+  const story = await db
+    .select()
+    .from(storySettings)
+    .where(eq(storySettings.uuid, storyUuid))
+    .get();
   if (!story) {
     throw notFound("故事设置不存在");
   }
@@ -246,6 +265,9 @@ export async function update(
   const updates: Partial<typeof storySettings.$inferInsert> = {
     updatedAt: new Date().toISOString(),
     status: "pending",
+    rejectReason: null,
+    reviewedBy: null,
+    reviewedAt: null,
   };
 
   const allowedFields = [
@@ -269,12 +291,19 @@ export async function update(
     updates.tags = JSON.stringify(data.tags);
   }
 
-  await db.update(storySettings).set(updates).where(eq(storySettings.id, story.id));
+  await db
+    .update(storySettings)
+    .set(updates)
+    .where(eq(storySettings.id, story.id));
   return { uuid: storyUuid, status: "pending" as const };
 }
 
 export async function remove(storyUuid: string, authorUuid: string) {
-  const story = await db.select().from(storySettings).where(eq(storySettings.uuid, storyUuid)).get();
+  const story = await db
+    .select()
+    .from(storySettings)
+    .where(eq(storySettings.uuid, storyUuid))
+    .get();
   if (!story) {
     throw notFound("故事设置不存在");
   }
@@ -284,18 +313,29 @@ export async function remove(storyUuid: string, authorUuid: string) {
     throw forbidden("只能删除自己的故事设置");
   }
 
-  await db.delete(likes).where(and(eq(likes.targetType, "story"), eq(likes.targetId, story.id)));
+  await db
+    .delete(likes)
+    .where(and(eq(likes.targetType, "story"), eq(likes.targetId, story.id)));
   await db
     .delete(downloads)
-    .where(and(eq(downloads.targetType, "story"), eq(downloads.targetId, story.id)));
+    .where(
+      and(eq(downloads.targetType, "story"), eq(downloads.targetId, story.id)),
+    );
   await db.delete(storySettings).where(eq(storySettings.id, story.id));
 
   return { success: true };
 }
 
 export async function toggleLike(storyUuid: string, userUuid: string) {
-  const story = await db.select().from(storySettings).where(eq(storySettings.uuid, storyUuid)).get();
+  const story = await db
+    .select()
+    .from(storySettings)
+    .where(eq(storySettings.uuid, storyUuid))
+    .get();
   if (!story) {
+    throw notFound("故事设置不存在");
+  }
+  if (story.status !== "approved") {
     throw notFound("故事设置不存在");
   }
 
@@ -304,32 +344,57 @@ export async function toggleLike(storyUuid: string, userUuid: string) {
     throw notFound("用户不存在");
   }
 
-  const existing = await db
-    .select({ id: likes.id })
-    .from(likes)
-    .where(and(eq(likes.userId, user.id), eq(likes.targetType, "story"), eq(likes.targetId, story.id)))
-    .get();
+  return db.transaction(async (tx) => {
+    const deleteResult = await tx
+      .delete(likes)
+      .where(
+        and(
+          eq(likes.userId, user.id),
+          eq(likes.targetType, "story"),
+          eq(likes.targetId, story.id),
+        ),
+      );
+    const deleted =
+      Number((deleteResult as { rowsAffected?: number }).rowsAffected ?? 0) > 0;
 
-  if (existing) {
-    await db.delete(likes).where(eq(likes.id, existing.id));
-    await db
-      .update(storySettings)
-      .set({ likeCount: sql`CASE WHEN ${storySettings.likeCount} > 0 THEN ${storySettings.likeCount} - 1 ELSE 0 END` })
-      .where(eq(storySettings.id, story.id));
-    return { liked: false };
-  }
+    if (deleted) {
+      await tx
+        .update(storySettings)
+        .set({
+          likeCount: sql`CASE WHEN ${storySettings.likeCount} > 0 THEN ${storySettings.likeCount} - 1 ELSE 0 END`,
+        })
+        .where(eq(storySettings.id, story.id));
+      return { liked: false };
+    }
 
-  await db.insert(likes).values({ userId: user.id, targetType: "story", targetId: story.id });
-  await db
-    .update(storySettings)
-    .set({ likeCount: sql`${storySettings.likeCount} + 1` })
-    .where(eq(storySettings.id, story.id));
-  return { liked: true };
+    const insertResult = await tx
+      .insert(likes)
+      .values({ userId: user.id, targetType: "story", targetId: story.id })
+      .onConflictDoNothing();
+    const inserted =
+      Number((insertResult as { rowsAffected?: number }).rowsAffected ?? 0) > 0;
+
+    if (inserted) {
+      await tx
+        .update(storySettings)
+        .set({ likeCount: sql`${storySettings.likeCount} + 1` })
+        .where(eq(storySettings.id, story.id));
+    }
+
+    return { liked: true };
+  });
 }
 
 export async function recordDownload(storyUuid: string, userUuid: string) {
-  const story = await db.select().from(storySettings).where(eq(storySettings.uuid, storyUuid)).get();
+  const story = await db
+    .select()
+    .from(storySettings)
+    .where(eq(storySettings.uuid, storyUuid))
+    .get();
   if (!story) {
+    throw notFound("故事设置不存在");
+  }
+  if (story.status !== "approved") {
     throw notFound("故事设置不存在");
   }
 
@@ -338,25 +403,20 @@ export async function recordDownload(storyUuid: string, userUuid: string) {
     throw notFound("用户不存在");
   }
 
-  const existing = await db
-    .select({ id: downloads.id })
-    .from(downloads)
-    .where(
-      and(
-        eq(downloads.userId, user.id),
-        eq(downloads.targetType, "story"),
-        eq(downloads.targetId, story.id)
-      )
-    )
-    .get();
+  await db.transaction(async (tx) => {
+    const insertResult = await tx
+      .insert(downloads)
+      .values({ userId: user.id, targetType: "story", targetId: story.id })
+      .onConflictDoNothing();
+    const inserted =
+      Number((insertResult as { rowsAffected?: number }).rowsAffected ?? 0) > 0;
+    if (!inserted) return;
 
-  if (!existing) {
-    await db.insert(downloads).values({ userId: user.id, targetType: "story", targetId: story.id });
-    await db
+    await tx
       .update(storySettings)
       .set({ downloadCount: sql`${storySettings.downloadCount} + 1` })
       .where(eq(storySettings.id, story.id));
-  }
+  });
 
   return getByUuid(storyUuid, user.id);
 }
@@ -376,7 +436,10 @@ export async function listMine(authorUuid: string) {
   return items.map((item) => ({
     uuid: item.uuid,
     title: item.title,
-    premise: item.premise.length > 100 ? `${item.premise.slice(0, 100)}...` : item.premise,
+    premise:
+      item.premise.length > 100
+        ? `${item.premise.slice(0, 100)}...`
+        : item.premise,
     genre: item.genre,
     status: item.status,
     rejectReason: item.rejectReason,

@@ -48,22 +48,22 @@ const API_PRESETS = [
 const IMAGE_API_PRESETS = [
   {
     name: "火山 (ARK)",
-    apiUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    apiUrl: "https://ark.cn-beijing.volces.com/api/v3/images/generations",
     model: "doubao-seedream-3-0-t2i-250415",
   },
   {
     name: "千问 (DashScope)",
-    apiUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    apiUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/images/generations",
     model: "qwen-image",
   },
   {
     name: "千帆 (Baidu)",
-    apiUrl: "https://qianfan.baidubce.com/v2",
+    apiUrl: "https://qianfan.baidubce.com/v2/images/generations",
     model: "ernie-vilg-v2",
   },
   {
     name: "Grok (xAI)",
-    apiUrl: "https://api.x.ai/v1",
+    apiUrl: "https://api.x.ai/v1/images/generations",
     model: "grok-2-image",
   },
   { name: "Custom", apiUrl: "", model: "" },
@@ -80,6 +80,10 @@ export default function SettingsScreen() {
   const [apiUrl, setApiUrl] = useState("");
   const [model, setModel] = useState("");
   const [temperature, setTemperature] = useState("0.7");
+  const [evalApiKey, setEvalApiKey] = useState("");
+  const [evalApiUrl, setEvalApiUrl] = useState("");
+  const [evalModel, setEvalModel] = useState("");
+  const [autoBgEveryChoices, setAutoBgEveryChoices] = useState("3");
   const [selectedPreset, setSelectedPreset] = useState(API_PRESETS.length - 1);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -113,6 +117,10 @@ export default function SettingsScreen() {
       setApiUrl(config.apiUrl);
       setModel(config.model);
       setTemperature(String(config.temperature ?? 0.7));
+      setEvalApiKey(config.evalApiKey || "");
+      setEvalApiUrl(config.evalApiUrl || config.apiUrl);
+      setEvalModel(config.evalModel || config.model);
+      setAutoBgEveryChoices(String(config.autoBackgroundEveryChoices ?? 3));
 
       const presetIndex = API_PRESETS.findIndex(
         (item) => item.apiUrl === config.apiUrl && item.model === config.model
@@ -174,9 +182,32 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (!evalApiUrl.trim()) {
+      Alert.alert("错误", "请输入评估模型 API URL");
+      return;
+    }
+
+    if (!evalModel.trim()) {
+      Alert.alert("错误", "请输入评估模型名称");
+      return;
+    }
+
     const parsedTemperature = Number(temperature.trim());
     if (Number.isNaN(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) {
       Alert.alert("错误", "温度需在 0 到 2 之间");
+      return;
+    }
+
+    const parsedAutoBgEveryChoices = Number.parseInt(
+      autoBgEveryChoices.trim(),
+      10,
+    );
+    if (
+      Number.isNaN(parsedAutoBgEveryChoices) ||
+      parsedAutoBgEveryChoices < 1 ||
+      parsedAutoBgEveryChoices > 100
+    ) {
+      Alert.alert("错误", "自动生图触发步数需在 1 到 100 之间");
       return;
     }
 
@@ -186,6 +217,10 @@ export default function SettingsScreen() {
         apiUrl: apiUrl.trim(),
         model: model.trim(),
         temperature: parsedTemperature,
+        evalApiKey: evalApiKey.trim(),
+        evalApiUrl: evalApiUrl.trim(),
+        evalModel: evalModel.trim(),
+        autoBackgroundEveryChoices: parsedAutoBgEveryChoices,
       });
       logInfo("settings", "AI config saved");
       Alert.alert("Success", "AI config saved");
@@ -448,11 +483,14 @@ export default function SettingsScreen() {
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
               value={apiUrl}
               onChangeText={setApiUrl}
-              placeholder="https://api.openai.com/v1/chat/completions"
+              placeholder="完整请求地址，如 https://.../chat/completions"
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
               autoCorrect={false}
             />
+            <Text style={[styles.helperText, { color: colors.muted }]}> 
+              提示：此处不会自动补全路径，请填写厂商要求的完整 endpoint（有的可能是 /multimodal-generation/generation）。
+            </Text>
           </View>
 
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
@@ -484,6 +522,71 @@ export default function SettingsScreen() {
               autoCorrect={false}
               keyboardType="decimal-pad"
             />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>评估模型 API Key（可选）</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={evalApiKey}
+              onChangeText={setEvalApiKey}
+              placeholder="留空则复用主 API Key"
+              placeholderTextColor={colors.muted}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>评估模型 API URL</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={evalApiUrl}
+              onChangeText={setEvalApiUrl}
+              placeholder="完整请求地址，如 https://.../chat/completions"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>评估模型名称</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={evalModel}
+              onChangeText={setEvalModel}
+              placeholder="gpt-4o-mini"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+            <View style={styles.inputRow}>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>自动生图触发步数</Text>
+            </View>
+            <TextInput
+              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
+              value={autoBgEveryChoices}
+              onChangeText={setAutoBgEveryChoices}
+              placeholder="每进行 N 次选项触发一次"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="number-pad"
+            />
+            <Text style={[styles.helperText, { color: colors.muted }]}> 
+              初始剧情会自动生图 1 次，之后按当前 N 值基于玩家选项次数触发。修改后即时生效。
+            </Text>
           </View>
 
           <View style={styles.buttonRow}>
@@ -549,11 +652,14 @@ export default function SettingsScreen() {
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
               value={imageApiUrl}
               onChangeText={setImageApiUrl}
-              placeholder="https://api.siliconflow.cn/v1"
+              placeholder="完整请求地址，如 https://.../images/generations"
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
               autoCorrect={false}
             />
+            <Text style={[styles.helperText, { color: colors.muted }]}> 
+              提示：此处不会自动补全路径，请按模型服务的文档填写完整生图 endpoint。
+            </Text>
           </View>
 
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>

@@ -49,13 +49,39 @@ const storyUpdateBodySchema = {
   },
 } as const;
 
-async function getCurrentUserId(userUuid?: string): Promise<number | undefined> {
+const storyListQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    page: { type: "string", pattern: "^[1-9]\\d*$" },
+    limit: { type: "string", pattern: "^[1-9]\\d*$" },
+    sort: { type: "string", enum: ["newest", "popular", "downloads"] },
+    search: { type: "string", minLength: 1, maxLength: 100 },
+    genre: { type: "string", minLength: 1, maxLength: 50 },
+    tags: { type: "string", minLength: 1, maxLength: 500 },
+  },
+} as const;
+
+function parsePositiveInt(input: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(input || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function getCurrentUserId(
+  userUuid?: string,
+): Promise<number | undefined> {
   if (!userUuid) return undefined;
-  const user = await db.select({ id: users.id }).from(users).where(eq(users.uuid, userUuid)).get();
+  const user = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.uuid, userUuid))
+    .get();
   return user?.id;
 }
 
-async function getOptionalUserId(request: { headers: { authorization?: string } }) {
+async function getOptionalUserId(request: {
+  headers: { authorization?: string };
+}) {
   const authHeader = request.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) return undefined;
   try {
@@ -77,19 +103,23 @@ export async function storyRoutes(app: FastifyInstance) {
       genre?: string;
       tags?: string;
     };
-  }>("/stories", async (request) => {
-    const currentUserId = await getOptionalUserId(request);
-    const { page, limit, sort, search, genre, tags } = request.query;
-    return storyService.list({
-      page: parseInt(page || "1", 10),
-      limit: Math.min(parseInt(limit || "20", 10), 50),
-      sort: (sort as "newest" | "popular" | "downloads") || "newest",
-      search: search || undefined,
-      genre: genre || undefined,
-      tags: tags ? tags.split(",") : undefined,
-      currentUserId,
-    });
-  });
+  }>(
+    "/stories",
+    { schema: { querystring: storyListQuerySchema } },
+    async (request) => {
+      const currentUserId = await getOptionalUserId(request);
+      const { page, limit, sort, search, genre, tags } = request.query;
+      return storyService.list({
+        page: parsePositiveInt(page, 1),
+        limit: Math.min(parsePositiveInt(limit, 20), 50),
+        sort: (sort as "newest" | "popular" | "downloads") || "newest",
+        search: search || undefined,
+        genre: genre || undefined,
+        tags: tags ? tags.split(",") : undefined,
+        currentUserId,
+      });
+    },
+  );
 
   app.get("/stories/mine", { preHandler: [requireAuth] }, async (request) => {
     return storyService.listMine(request.user!.sub);
@@ -118,15 +148,19 @@ export async function storyRoutes(app: FastifyInstance) {
     { preHandler: [requireBound], schema: { body: storyCreateBodySchema } },
     async (request) => {
       return storyService.create(request.user!.sub, request.body);
-    }
+    },
   );
 
   app.put<{ Params: { uuid: string }; Body: Record<string, unknown> }>(
     "/stories/:uuid",
     { preHandler: [requireBound], schema: { body: storyUpdateBodySchema } },
     async (request) => {
-      return storyService.update(request.params.uuid, request.user!.sub, request.body);
-    }
+      return storyService.update(
+        request.params.uuid,
+        request.user!.sub,
+        request.body,
+      );
+    },
   );
 
   app.delete<{ Params: { uuid: string } }>(
@@ -134,18 +168,20 @@ export async function storyRoutes(app: FastifyInstance) {
     { preHandler: [requireBound] },
     async (request) => {
       return storyService.remove(request.params.uuid, request.user!.sub);
-    }
+    },
   );
 
   app.post<{ Params: { uuid: string } }>(
     "/stories/:uuid/like",
     { preHandler: [requireAuth] },
-    async (request) => storyService.toggleLike(request.params.uuid, request.user!.sub)
+    async (request) =>
+      storyService.toggleLike(request.params.uuid, request.user!.sub),
   );
 
   app.post<{ Params: { uuid: string } }>(
     "/stories/:uuid/download",
     { preHandler: [requireAuth] },
-    async (request) => storyService.recordDownload(request.params.uuid, request.user!.sub)
+    async (request) =>
+      storyService.recordDownload(request.params.uuid, request.user!.sub),
   );
 }

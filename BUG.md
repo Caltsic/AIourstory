@@ -309,3 +309,149 @@ This file tracks reproducible bugs and fix records.
 4. Files:
    - `lib/llm-client.ts`
    - `app/game.tsx`
+
+### [BUG-20260223-011] 配置编辑遮挡、URL 自动补全不兼容与日志不可观测
+
+- Status: fixed
+- Priority: P1
+- Platform: Android / iOS
+- Version: 1.0.15
+- Found at: 2026-02-23
+- Repro steps:
+
+1. 在提示词配置页打开“编辑提示词”弹窗，观察取消/保存被顶部区域遮挡。
+2. 弹出输入法后，编辑区域被键盘遮挡。
+3. 填写厂商要求的非 OpenAI 标准路径（如 `.../multimodal-generation/generation`），应用仍强行补 `/chat/completions` 或 `/images/generations` 导致失败。
+4. 遇到 JSON 格式问题时无法从日志回溯“发送内容/返回内容”。
+
+- Actual result:
+
+1. 弹窗 UI 未按 SafeArea/键盘做适配。
+2. URL 被强行拼接固定路径，降低兼容性。
+3. 缺少请求/响应日志，排障困难。
+
+- Expected result:
+
+1. 弹窗按钮与输入框不被顶部/键盘遮挡。
+2. URL 完全由用户填写并直接生效。
+3. 日志可查看每次请求与响应摘要。
+
+- Logs/Screenshots: none
+- Workaround: none
+- Fix notes:
+
+1. 提示词编辑弹窗改为 SafeArea + `KeyboardAvoidingView`。
+2. 取消 LLM/生图 URL 自动补全路径，完全使用用户填写的完整 endpoint。
+3. LLM/生图请求与响应摘要写入 `app-logger`。
+4. 补充主角性别参数，并透传到生成/续写上下文。
+5. Files:
+   - `app/(tabs)/prompts.tsx`
+   - `app/prompt-settings.tsx`
+   - `app/(tabs)/settings.tsx`
+   - `lib/llm-client.ts`
+   - `lib/image-client.ts`
+   - `lib/story-store.ts`
+   - `app/create-story.tsx`
+
+### [BUG-20260223-012] 切换故事时异步生成回写污染 UI（看起来像串故事）
+
+- Status: fixed
+- Priority: P1
+- Platform: Android / iOS
+- Version: 1.0.16
+- Found at: 2026-02-23
+- Repro steps:
+
+1. 在故事 A 触发剧情生成或继续剧情。
+2. 生成未完成时返回主页面，进入故事 B。
+3. 等待故事 A 返回结果。
+
+- Actual result:
+
+1. 故事 A 的异步回调可能在故事 B 页面执行 UI 更新（setStory/setViewIndex/弹窗），造成“串故事”的错觉。
+
+- Expected result:
+
+1. 异步生成应只写回对应 storyId 的存档，不影响当前展示的其他故事 UI。
+2. 主页面应可查看每个故事生成状态与最后一次失败原因。
+
+- Logs/Screenshots: none
+- Workaround: 等待生成结束后再切换故事
+- Fix notes:
+
+1. `game` 生成/续写引入 token+storyId 守卫，UI 更新仅在当前 storyId 且 token 最新时执行。
+2. `Story` 增加 `storyGenerationStatus`/`lastStoryGenerationError`，主页面展示 generating/failed 状态。
+3. Files:
+   - `app/game.tsx`
+   - `lib/story-store.ts`
+   - `app/(tabs)/index.tsx`
+
+### [BUG-20260223-013] 历史压缩/摘要并发导致 segments 清空、对话框卡死并回到开头
+
+- Status: fixed
+- Priority: P0
+- Platform: Android / iOS
+- Version: 1.0.16
+- Found at: 2026-02-23
+- Repro steps:
+
+1. 长剧情触发“历史压缩摘要/上文压缩”。
+2. 在继续剧情生成的同时触发摘要回写。
+3. 观察对话框出现空白卡住；退出重进后故事从开头重新生成，甚至覆盖存档。
+
+- Actual result:
+
+1. 摘要回写会裁剪 segments，极端情况下将 segments 置空，导致 UI 无段落可显示。
+2. 重进时 segments 为空触发初始生成，剧情回到开头并覆盖原进度。
+3. 并发 updateStory 存在互相覆盖风险，进一步放大回档。
+
+- Expected result:
+
+1. 摘要仅作为 AI 上下文与总结记录，不应修改可见 segments。
+2. 续写上文应采用“摘要 + 最近剧情”结构，而不是用摘要替代历史段落。
+3. 已受损存档应自动从摘要恢复续写，而不是重新从开头生成。
+
+- Logs/Screenshots: none
+- Workaround: none
+- Fix notes:
+
+1. 摘要回写仅更新 `storySummary/summaryHistory`，不再裁剪 `segments`。
+2. 续写 history 改为 `buildHistoryContext(summary + recent)`，最近剧情扩大到 25 段。
+
+### [BUG-20260223-014] 多故事长期卡在剧情生成中（超过5分钟不返回）
+
+- Status: fixed
+- Priority: P0
+- Platform: Android / iOS
+- Version: 1.0.16
+- Found at: 2026-02-23
+- Repro steps:
+
+1. 进入两个不同故事并触发剧情生成。
+2. 观察其中至少一个故事超过 5 分钟仍停留在生成中。
+
+- Actual result:
+
+1. 生成流程中的部分 LLM 子请求没有超时保护，网络或模型卡住时会无限等待。
+2. 历史遗留 `storyGenerationStatus=generating` 在重进时会持续转圈，无法自动回收。
+
+- Expected result:
+
+1. 生成链路任何子请求都应在合理超时后退出并进入 failed。
+2. 遗留 generating 状态应在重进时自动回收，避免永久卡死。
+
+- Logs/Screenshots: none
+- Workaround: 手动重启应用并重试
+- Fix notes:
+
+1. `generateStory/summarizeStory/evaluateInitialAffinities/generateSummaryTitle` 增加 120s 超时。
+2. `loadStory` 增加 stale generating 自动回收（3分钟未更新即回收为 failed）。
+3. timeout 分支写入日志用于定位。
+4. Files:
+   - `lib/llm-client.ts`
+   - `app/game.tsx`
+5. 续写落盘改为合并写回，避免与后台摘要互相覆盖。
+6. 若 segments 为空但存在摘要，重进自动走“从摘要恢复续写”。
+7. Files:
+   - `app/game.tsx`
+   - `lib/story-store.ts`

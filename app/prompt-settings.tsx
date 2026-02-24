@@ -8,6 +8,7 @@ import {
   TextInput,
   ScrollView,
   Modal,
+  KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -41,7 +42,8 @@ export default function PromptSettingsScreen() {
   // State
   const [activeId, setActiveId] = useState("default");
   const [presets, setPresets] = useState<PromptPreset[]>([]);
-  const [currentPrompts, setCurrentPrompts] = useState<PromptSet>(getDefaultPrompts());
+  const [currentPrompts, setCurrentPrompts] =
+    useState<PromptSet>(getDefaultPrompts());
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Prompt editor modal
@@ -217,9 +219,10 @@ export default function PromptSettingsScreen() {
 
   // ─── Helpers ──────────────────────────────────────────────────────
 
-  const activePresetName = activeId === "default"
-    ? "默认"
-    : presets.find((p) => p.id === activeId)?.name || "默认";
+  const activePresetName =
+    activeId === "default"
+      ? "默认"
+      : presets.find((p) => p.id === activeId)?.name || "默认";
 
   function truncate(text: string, max: number) {
     return text.length > max ? text.slice(0, max) + "..." : text;
@@ -234,42 +237,79 @@ export default function PromptSettingsScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconSymbol name="chevron.left" size={24} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>提示词配置</Text>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+          提示词配置
+        </Text>
         <View style={styles.headerRight} />
       </View>
 
       <ScrollView style={styles.content}>
         {/* Active Preset Section */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>当前预设</Text>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>
+            当前预设
+          </Text>
           <TouchableOpacity
             onPress={() => setShowPresetList(true)}
-            style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            style={[
+              styles.card,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
           >
             <View style={styles.cardRow}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                {activeId !== "default" && presets.find((p) => p.id === activeId)?.imageUri ? (
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+              >
+                {activeId !== "default" &&
+                presets.find((p) => p.id === activeId)?.imageUri ? (
                   <Image
-                    source={{ uri: presets.find((p) => p.id === activeId)!.imageUri! }}
+                    source={{
+                      uri: presets.find((p) => p.id === activeId)!.imageUri!,
+                    }}
                     style={styles.presetThumb}
                   />
                 ) : (
-                  <View style={[styles.presetThumbPlaceholder, { backgroundColor: colors.primary + "20" }]}>
-                    <IconSymbol name="doc.text" size={18} color={colors.primary} />
+                  <View
+                    style={[
+                      styles.presetThumbPlaceholder,
+                      { backgroundColor: colors.primary + "20" },
+                    ]}
+                  >
+                    <IconSymbol
+                      name="doc.text"
+                      size={18}
+                      color={colors.primary}
+                    />
                   </View>
                 )}
                 <View>
-                  <Text style={[styles.cardLabel, { color: colors.foreground }]}>{activePresetName}</Text>
+                  <Text
+                    style={[styles.cardLabel, { color: colors.foreground }]}
+                  >
+                    {activePresetName}
+                  </Text>
                   {activeId !== "default" && (
-                    <Text style={[styles.presetDescSmall, { color: colors.muted }]}>
-                      {truncate(presets.find((p) => p.id === activeId)?.description || "", 20)}
+                    <Text
+                      style={[styles.presetDescSmall, { color: colors.muted }]}
+                    >
+                      {truncate(
+                        presets.find((p) => p.id === activeId)?.description ||
+                          "",
+                        20,
+                      )}
                     </Text>
                   )}
                 </View>
               </View>
               <View style={styles.cardValueRow}>
-                <Text style={[styles.cardValue, { color: colors.muted }]}>切换</Text>
-                <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+                <Text style={[styles.cardValue, { color: colors.muted }]}>
+                  切换
+                </Text>
+                <IconSymbol
+                  name="chevron.right"
+                  size={16}
+                  color={colors.muted}
+                />
               </View>
             </View>
           </TouchableOpacity>
@@ -277,23 +317,37 @@ export default function PromptSettingsScreen() {
 
         {/* Prompt Cards */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.muted }]}>提示词列表</Text>
+          <Text style={[styles.sectionTitle, { color: colors.muted }]}>
+            提示词列表
+          </Text>
           {PROMPT_KEYS.map((key) => (
             <TouchableOpacity
               key={key}
               onPress={() => openPromptEditor(key)}
-              style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              style={[
+                styles.card,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
             >
               <View style={styles.cardRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.cardLabel, { color: colors.foreground }]}>
+                  <Text
+                    style={[styles.cardLabel, { color: colors.foreground }]}
+                  >
                     {PROMPT_META[key].label}
                   </Text>
-                  <Text style={[styles.promptPreview, { color: colors.muted }]} numberOfLines={1}>
+                  <Text
+                    style={[styles.promptPreview, { color: colors.muted }]}
+                    numberOfLines={1}
+                  >
                     {PROMPT_META[key].description}
                   </Text>
                 </View>
-                <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+                <IconSymbol
+                  name="chevron.right"
+                  size={16}
+                  color={colors.muted}
+                />
               </View>
             </TouchableOpacity>
           ))}
@@ -306,13 +360,24 @@ export default function PromptSettingsScreen() {
               onPress={handleResetAll}
               style={[styles.secondaryButton, { borderColor: colors.border }]}
             >
-              <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>恢复默认</Text>
+              <Text
+                style={[
+                  styles.secondaryButtonText,
+                  { color: colors.foreground },
+                ]}
+              >
+                恢复默认
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleSaveChanges}
               style={[
                 styles.primaryButton,
-                { backgroundColor: hasUnsavedChanges ? colors.primary : colors.muted },
+                {
+                  backgroundColor: hasUnsavedChanges
+                    ? colors.primary
+                    : colors.muted,
+                },
               ]}
               disabled={!hasUnsavedChanges}
             >
@@ -330,48 +395,67 @@ export default function PromptSettingsScreen() {
         animationType="slide"
         onRequestClose={() => setEditingKey(null)}
       >
-        <View style={[styles.modalFull, { backgroundColor: colors.background }]}>
-          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setEditingKey(null)}>
-              <Text style={[styles.modalAction, { color: colors.muted }]}>取消</Text>
-            </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-              {editingKey ? PROMPT_META[editingKey].label : ""}
-            </Text>
-            <TouchableOpacity onPress={savePromptEdit}>
-              <Text style={[styles.modalAction, { color: colors.primary }]}>保存</Text>
-            </TouchableOpacity>
-          </View>
-
-          {editingKey && (
-            <Text style={[styles.editorDesc, { color: colors.muted }]}>
-              {PROMPT_META[editingKey].description}
-            </Text>
-          )}
-
-          <TextInput
-            style={[styles.editorInput, {
-              color: colors.foreground,
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-            }]}
-            value={editingText}
-            onChangeText={setEditingText}
-            multiline
-            textAlignVertical="top"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
-          <TouchableOpacity
-            onPress={resetPromptToDefault}
-            style={[styles.resetButton, { borderColor: colors.border }]}
+        <ScreenContainer edges={["top", "bottom", "left", "right"]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={[styles.modalFull, { backgroundColor: colors.background }]}
           >
-            <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>
-              恢复此项默认值
-            </Text>
-          </TouchableOpacity>
-        </View>
+            <View
+              style={[styles.modalHeader, { borderBottomColor: colors.border }]}
+            >
+              <TouchableOpacity onPress={() => setEditingKey(null)}>
+                <Text style={[styles.modalAction, { color: colors.muted }]}>
+                  取消
+                </Text>
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: colors.foreground }]}>
+                {editingKey ? PROMPT_META[editingKey].label : ""}
+              </Text>
+              <TouchableOpacity onPress={savePromptEdit}>
+                <Text style={[styles.modalAction, { color: colors.primary }]}>
+                  保存
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {editingKey ? (
+              <Text style={[styles.editorDesc, { color: colors.muted }]}>
+                {PROMPT_META[editingKey].description}
+              </Text>
+            ) : null}
+
+            <TextInput
+              style={[
+                styles.editorInput,
+                {
+                  color: colors.foreground,
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                },
+              ]}
+              value={editingText}
+              onChangeText={setEditingText}
+              multiline
+              textAlignVertical="top"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              onPress={resetPromptToDefault}
+              style={[styles.resetButton, { borderColor: colors.border }]}
+            >
+              <Text
+                style={[
+                  styles.secondaryButtonText,
+                  { color: colors.foreground },
+                ]}
+              >
+                恢复此项默认值
+              </Text>
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
+        </ScreenContainer>
       </Modal>
 
       {/* ─── Preset List Modal ───────────────────────────────────── */}
@@ -390,54 +474,137 @@ export default function PromptSettingsScreen() {
             style={[styles.modalContent, { backgroundColor: colors.surface }]}
             onStartShouldSetResponder={() => true}
           >
-            <Text style={[styles.modalTitle, { color: colors.foreground, marginBottom: 16 }]}>
+            <Text
+              style={[
+                styles.modalTitle,
+                { color: colors.foreground, marginBottom: 16 },
+              ]}
+            >
               选择预设
             </Text>
 
             <ScrollView style={{ maxHeight: 400 }}>
               {/* Default option */}
               <TouchableOpacity
-                style={[styles.presetItem, activeId === "default" && { backgroundColor: colors.primary + "20" }]}
+                style={[
+                  styles.presetItem,
+                  activeId === "default" && {
+                    backgroundColor: colors.primary + "20",
+                  },
+                ]}
                 onPress={() => handleSwitchPreset("default")}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
-                  <View style={[styles.presetThumbPlaceholder, { backgroundColor: colors.primary + "20" }]}>
-                    <IconSymbol name="doc.text" size={16} color={colors.primary} />
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
+                    flex: 1,
+                  }}
+                >
+                  <View
+                    style={[
+                      styles.presetThumbPlaceholder,
+                      { backgroundColor: colors.primary + "20" },
+                    ]}
+                  >
+                    <IconSymbol
+                      name="doc.text"
+                      size={16}
+                      color={colors.primary}
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.presetName, { color: colors.foreground }]}>默认</Text>
-                    <Text style={[styles.presetDescSmall, { color: colors.muted }]}>内置提示词</Text>
+                    <Text
+                      style={[styles.presetName, { color: colors.foreground }]}
+                    >
+                      默认
+                    </Text>
+                    <Text
+                      style={[styles.presetDescSmall, { color: colors.muted }]}
+                    >
+                      内置提示词
+                    </Text>
                   </View>
                 </View>
-                {activeId === "default" && <IconSymbol name="checkmark" size={18} color={colors.primary} />}
+                {activeId === "default" && (
+                  <IconSymbol
+                    name="checkmark"
+                    size={18}
+                    color={colors.primary}
+                  />
+                )}
               </TouchableOpacity>
 
               {/* User presets */}
               {presets.map((preset) => (
                 <TouchableOpacity
                   key={preset.id}
-                  style={[styles.presetItem, activeId === preset.id && { backgroundColor: colors.primary + "20" }]}
+                  style={[
+                    styles.presetItem,
+                    activeId === preset.id && {
+                      backgroundColor: colors.primary + "20",
+                    },
+                  ]}
                   onPress={() => handleSwitchPreset(preset.id)}
                   onLongPress={() => openEditPresetMeta(preset)}
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                      flex: 1,
+                    }}
+                  >
                     {preset.imageUri ? (
-                      <Image source={{ uri: preset.imageUri }} style={styles.presetThumb} />
+                      <Image
+                        source={{ uri: preset.imageUri }}
+                        style={styles.presetThumb}
+                      />
                     ) : (
-                      <View style={[styles.presetThumbPlaceholder, { backgroundColor: colors.primary + "20" }]}>
-                        <IconSymbol name="doc.text" size={16} color={colors.primary} />
+                      <View
+                        style={[
+                          styles.presetThumbPlaceholder,
+                          { backgroundColor: colors.primary + "20" },
+                        ]}
+                      >
+                        <IconSymbol
+                          name="doc.text"
+                          size={16}
+                          color={colors.primary}
+                        />
                       </View>
                     )}
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.presetName, { color: colors.foreground }]}>{preset.name}</Text>
+                      <Text
+                        style={[
+                          styles.presetName,
+                          { color: colors.foreground },
+                        ]}
+                      >
+                        {preset.name}
+                      </Text>
                       {preset.description ? (
-                        <Text style={[styles.presetDescSmall, { color: colors.muted }]} numberOfLines={1}>
+                        <Text
+                          style={[
+                            styles.presetDescSmall,
+                            { color: colors.muted },
+                          ]}
+                          numberOfLines={1}
+                        >
                           {preset.description}
                         </Text>
                       ) : null}
                     </View>
                   </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
                     <TouchableOpacity
                       onPress={() => {
                         setShowPresetList(false);
@@ -445,7 +612,11 @@ export default function PromptSettingsScreen() {
                       }}
                       hitSlop={8}
                     >
-                      <IconSymbol name="pencil" size={16} color={colors.muted} />
+                      <IconSymbol
+                        name="pencil"
+                        size={16}
+                        color={colors.muted}
+                      />
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => handleDeletePreset(preset.id)}
@@ -453,7 +624,13 @@ export default function PromptSettingsScreen() {
                     >
                       <IconSymbol name="trash" size={16} color={colors.error} />
                     </TouchableOpacity>
-                    {activeId === preset.id && <IconSymbol name="checkmark" size={18} color={colors.primary} />}
+                    {activeId === preset.id && (
+                      <IconSymbol
+                        name="checkmark"
+                        size={18}
+                        color={colors.primary}
+                      />
+                    )}
                   </View>
                 </TouchableOpacity>
               ))}
@@ -464,7 +641,10 @@ export default function PromptSettingsScreen() {
                 setShowPresetList(false);
                 setTimeout(() => handleCreatePreset(), 300);
               }}
-              style={[styles.primaryButton, { backgroundColor: colors.primary, marginTop: 16 }]}
+              style={[
+                styles.primaryButton,
+                { backgroundColor: colors.primary, marginTop: 16 },
+              ]}
             >
               <IconSymbol name="plus" size={18} color="#fff" />
               <Text style={styles.primaryButtonText}>新建预设</Text>
@@ -485,59 +665,114 @@ export default function PromptSettingsScreen() {
           activeOpacity={1}
           onPress={() => setEditingPreset(null)}
         >
-          <View
-            style={[styles.modalContent, { backgroundColor: colors.surface }]}
-            onStartShouldSetResponder={() => true}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={{ width: "100%" }}
           >
-            <Text style={[styles.modalTitle, { color: colors.foreground, marginBottom: 16 }]}>
-              {editingPreset?.id ? "编辑预设" : "新建预设"}
-            </Text>
-
-            {/* Image picker */}
-            <TouchableOpacity onPress={handlePickImage} style={styles.imagePickerArea}>
-              {presetImage ? (
-                <Image source={{ uri: presetImage }} style={styles.presetImagePreview} />
-              ) : (
-                <View style={[styles.presetImagePlaceholder, { backgroundColor: colors.background, borderColor: colors.border }]}>
-                  <IconSymbol name="photo" size={32} color={colors.muted} />
-                  <Text style={[styles.imagePickerText, { color: colors.muted }]}>选择图片</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-
-            {/* Name */}
-            <TextInput
-              style={[styles.metaInput, { color: colors.foreground, backgroundColor: colors.background, borderColor: colors.border }]}
-              value={presetName}
-              onChangeText={setPresetName}
-              placeholder="预设名称"
-              placeholderTextColor={colors.muted}
-            />
-
-            {/* Description */}
-            <TextInput
-              style={[styles.metaInput, { color: colors.foreground, backgroundColor: colors.background, borderColor: colors.border }]}
-              value={presetDesc}
-              onChangeText={setPresetDesc}
-              placeholder="简短描述（可选）"
-              placeholderTextColor={colors.muted}
-            />
-
-            <View style={[styles.buttonRow, { marginTop: 16 }]}>
-              <TouchableOpacity
-                onPress={() => setEditingPreset(null)}
-                style={[styles.secondaryButton, { borderColor: colors.border }]}
+            <View
+              style={[styles.modalContent, { backgroundColor: colors.surface }]}
+              onStartShouldSetResponder={() => true}
+            >
+              <Text
+                style={[
+                  styles.modalTitle,
+                  { color: colors.foreground, marginBottom: 16 },
+                ]}
               >
-                <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>取消</Text>
-              </TouchableOpacity>
+                {editingPreset?.id ? "编辑预设" : "新建预设"}
+              </Text>
+
+              {/* Image picker */}
               <TouchableOpacity
-                onPress={handleSavePresetMeta}
-                style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+                onPress={handlePickImage}
+                style={styles.imagePickerArea}
               >
-                <Text style={styles.primaryButtonText}>保存</Text>
+                {presetImage ? (
+                  <Image
+                    source={{ uri: presetImage }}
+                    style={styles.presetImagePreview}
+                  />
+                ) : (
+                  <View
+                    style={[
+                      styles.presetImagePlaceholder,
+                      {
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <IconSymbol name="photo" size={32} color={colors.muted} />
+                    <Text
+                      style={[styles.imagePickerText, { color: colors.muted }]}
+                    >
+                      选择图片
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
+
+              {/* Name */}
+              <TextInput
+                style={[
+                  styles.metaInput,
+                  {
+                    color: colors.foreground,
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
+                  },
+                ]}
+                value={presetName}
+                onChangeText={setPresetName}
+                placeholder="预设名称"
+                placeholderTextColor={colors.muted}
+              />
+
+              {/* Description */}
+              <TextInput
+                style={[
+                  styles.metaInput,
+                  {
+                    color: colors.foreground,
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
+                  },
+                ]}
+                value={presetDesc}
+                onChangeText={setPresetDesc}
+                placeholder="简短描述（可选）"
+                placeholderTextColor={colors.muted}
+              />
+
+              <View style={[styles.buttonRow, { marginTop: 16 }]}>
+                <TouchableOpacity
+                  onPress={() => setEditingPreset(null)}
+                  style={[
+                    styles.secondaryButton,
+                    { borderColor: colors.border },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.secondaryButtonText,
+                      { color: colors.foreground },
+                    ]}
+                  >
+                    取消
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleSavePresetMeta}
+                  style={[
+                    styles.primaryButton,
+                    { backgroundColor: colors.primary },
+                  ]}
+                >
+                  <Text style={styles.primaryButtonText}>保存</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </TouchableOpacity>
       </Modal>
     </ScreenContainer>
@@ -640,7 +875,6 @@ const styles = StyleSheet.create({
   // Prompt editor modal
   modalFull: {
     flex: 1,
-    paddingTop: Platform.OS === "ios" ? 50 : 20,
   },
   modalHeader: {
     flexDirection: "row",

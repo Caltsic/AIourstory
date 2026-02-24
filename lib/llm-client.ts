@@ -20,6 +20,7 @@ import type {
   DifficultyLevel,
   PaceLevel,
 } from "./story-store";
+import { normalizeLLMNewCharacters } from "./new-character-normalizer";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ export interface ContinueStoryParams {
   pacing?: PaceLevel;
   characterCards?: CharacterCard[];
   diceOutcomeContext?: string;
+  continuationFeedback?: string[];
 }
 
 export interface SummarizeStoryParams {
@@ -202,6 +204,13 @@ export interface LLMResponse {
   minCharsTarget: number;
 }
 
+export interface ContinuationEvaluationResult {
+  score: number;
+  strengths: string[];
+  issues: string[];
+  advice: string;
+}
+
 export const PACE_MIN_CHARS: Record<PaceLevel, number> = {
   慵懒: 1600,
   轻松: 1200,
@@ -263,6 +272,7 @@ function buildPacingStructureConstraint(requiredPacing: PaceLevel): string {
 
 export const HISTORY_CONTEXT_CHARS_LIMIT = 8000;
 const CONTINUE_REQUEST_TIMEOUT_MS = 90_000;
+const LLM_REQUEST_TIMEOUT_MS = 90_000;
 const HIGH_UNCERTAINTY_ACTION_PATTERNS = [
   /尝试|试图/,
   /强行|硬闯|蛮力|撞开|破门|砸开/,
@@ -286,6 +296,20 @@ const HIGH_RISK_CONTEXT_PATTERNS = [
   /卡住|上锁|封死|塌陷|爆炸|火势|毒气|追兵|倒计时/,
   /枪|刀|坠落|窒息|中毒|重伤/,
 ];
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = LLM_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function shouldRequireDiceCheck(
   action: string,
@@ -559,6 +583,10 @@ export async function saveLLMConfig(config: {
   apiUrl: string;
   model: string;
   temperature?: number;
+  evalApiKey?: string;
+  evalApiUrl?: string;
+  evalModel?: string;
+  autoBackgroundEveryChoices?: number;
 }): Promise<void> {
   await saveStorageConfig(config);
 }
@@ -586,7 +614,7 @@ export async function testAPIKey(
     const url = apiUrl.includes("/chat/completions")
       ? apiUrl
       : `${apiUrl}/chat/completions`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -637,7 +665,7 @@ export async function generateStory(
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -691,44 +719,40 @@ export async function continueStory(
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(
-    () => controller.abort(),
-    CONTINUE_REQUEST_TIMEOUT_MS,
-  );
 
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [
+            {
+              role: "system",
+              content: prompts.CONTINUE_SYSTEM_PROMPT,
+            },
+            {
+              role: "user",
+              content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${params.history.trim()}\n\n${params.continuationFeedback?.length ? `[最近续写复盘建议]\n${params.continuationFeedback.join("\n")}` : ""}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
+            },
+          ],
+          temperature,
+          max_tokens: 4000,
+        }),
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          {
-            role: "system",
-            content: prompts.CONTINUE_SYSTEM_PROMPT,
-          },
-          {
-            role: "user",
-            content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${params.history.trim()}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
-          },
-        ],
-        temperature,
-        max_tokens: 4000,
-      }),
-      signal: controller.signal,
-    });
+      CONTINUE_REQUEST_TIMEOUT_MS,
+    );
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error("剧情生成超时，请重试（已自动保护长上下文）");
     }
     throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
@@ -761,7 +785,7 @@ export async function summarizeStory(
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -830,7 +854,7 @@ export async function generateSummaryTitle(params: {
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -881,7 +905,7 @@ export async function randomizeStory(): Promise<RandomStoryConfig> {
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -946,7 +970,7 @@ export async function generateImagePrompt(summary: string): Promise<string> {
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1047,21 +1071,10 @@ function parseLLMResponse(
     }
 
     // Extract newCharacters if present
-    const newCharacters: NewCharacterData[] = Array.isArray(
+    const newCharacters: NewCharacterData[] = normalizeLLMNewCharacters(
       parsed.newCharacters,
-    )
-      ? parsed.newCharacters
-          .filter(
-            (c: NewCharacterData) =>
-              c.name && c.gender && c.personality && c.background,
-          )
-          .map((c: NewCharacterData) => ({
-            ...c,
-            hiddenName: c.hiddenName?.trim() || "陌生人",
-            knownToPlayer:
-              typeof c.knownToPlayer === "boolean" ? c.knownToPlayer : true,
-          }))
-      : [];
+      (message) => console.warn(`[LLM] parseLLMResponse: ${message}`),
+    );
 
     const parsedPacing = normalizePaceLevel(parsed.pacing);
     const pacing = parsedPacing;
@@ -1110,7 +1123,7 @@ export async function evaluateCustomAction(
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1174,7 +1187,7 @@ export async function evaluateInitialAffinities(
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1249,7 +1262,7 @@ export async function generateCharacterPortraitPrompt(
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1278,4 +1291,92 @@ export async function generateCharacterPortraitPrompt(
 
   const data = await response.json();
   return data.choices[0]?.message?.content?.trim() ?? "";
+}
+
+export async function evaluateContinuationQuality(params: {
+  title: string;
+  genre: string;
+  premise: string;
+  historyBefore: string;
+  generatedSegments: StorySegment[];
+}): Promise<ContinuationEvaluationResult | null> {
+  const config = await getLLMConfig();
+  if (!config.apiKey) return null;
+
+  const evalApiKey = config.evalApiKey?.trim() || config.apiKey;
+  const evalApiUrl = config.evalApiUrl?.trim() || config.apiUrl;
+  const evalModel = config.evalModel?.trim() || config.model;
+
+  if (!evalApiKey || !evalApiUrl || !evalModel) return null;
+
+  const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
+  const url = evalApiUrl.includes("/chat/completions")
+    ? evalApiUrl
+    : `${evalApiUrl}/chat/completions`;
+
+  const generatedText = params.generatedSegments
+    .map((segment) => {
+      if (segment.type === "dialogue") {
+        return `[${segment.character || "角色"}] ${segment.text}`;
+      }
+      if (segment.type === "choice") {
+        const choices = Array.isArray(segment.choices)
+          ? segment.choices.join(" | ")
+          : "";
+        return `[选择] ${segment.text}${choices ? ` | ${choices}` : ""}`;
+      }
+      return `[旁白] ${segment.text}`;
+    })
+    .join("\n");
+
+  const response = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${evalApiKey}`,
+    },
+    body: JSON.stringify({
+      model: evalModel,
+      messages: [
+        {
+          role: "system",
+          content: prompts.EVALUATE_CONTINUATION_SYSTEM_PROMPT,
+        },
+        {
+          role: "user",
+          content: `故事标题：${params.title}\n题材：${params.genre}\n开场：${params.premise}\n\n[续写前上下文]\n${params.historyBefore}\n\n[本轮新增片段]\n${generatedText}`,
+        },
+      ],
+      temperature,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!response.ok) return null;
+  const data = await response.json();
+  const content: string = data.choices?.[0]?.message?.content?.trim() || "";
+  if (!content) return null;
+
+  try {
+    const parsed = parseJsonObjectWithRecovery(content) as {
+      score?: number;
+      strengths?: string[];
+      issues?: string[];
+      advice?: string;
+    };
+    const score = Math.max(0, Math.min(100, Math.round(Number(parsed.score))));
+    return {
+      score: Number.isNaN(score) ? 0 : score,
+      strengths: Array.isArray(parsed.strengths)
+        ? parsed.strengths.map((item) => String(item)).slice(0, 5)
+        : [],
+      issues: Array.isArray(parsed.issues)
+        ? parsed.issues.map((item) => String(item)).slice(0, 5)
+        : [],
+      advice: String(parsed.advice || "").trim(),
+    };
+  } catch {
+    return null;
+  }
 }

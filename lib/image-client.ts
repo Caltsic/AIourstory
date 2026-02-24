@@ -8,12 +8,18 @@ import {
   saveImageStorageConfig,
   type ImageStorageConfig,
 } from "./storage";
-import { logError, logWarn } from "./app-logger";
+import { logError, logInfo, logWarn } from "./app-logger";
 
 export type { ImageStorageConfig };
 
 function normalizeUrl(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+function truncateForLog(text: string, maxChars = 800): string {
+  const normalized = (text ?? "").toString();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}...[truncated ${normalized.length - maxChars} chars]`;
 }
 
 function isDashScopeHost(url: string): boolean {
@@ -169,9 +175,8 @@ export async function generateImage(prompt: string): Promise<string> {
   }> = [
     {
       kind: "openai",
-      url: baseUrl.endsWith("/images/generations")
-        ? baseUrl
-        : `${baseUrl}/images/generations`,
+      // 使用用户填写的完整 endpoint，不做任何路径拼接
+      url: baseUrl,
       body: requestBody,
     },
   ];
@@ -201,9 +206,18 @@ export async function generateImage(prompt: string): Promise<string> {
     });
   }
 
+  logInfo(
+    "image",
+    `request model=${config.imageModel} baseUrl=${baseUrl} size=${finalImageSize || "(none)"} promptChars=${prompt.length} prompt=${truncateForLog(prompt, 600)}`,
+  );
+
   let lastError = "";
 
   for (const candidate of requestCandidates) {
+    logInfo(
+      "image",
+      `request candidate=${candidate.kind} url=${candidate.url}`,
+    );
     let response = await fetch(candidate.url, {
       method: "POST",
       headers: {
@@ -300,15 +314,27 @@ export async function generateImage(prompt: string): Promise<string> {
         "";
 
       if (taskId) {
+        logInfo(
+          "image",
+          `response candidate=${candidate.kind} status=200 asyncTaskId=${taskId}`,
+        );
         return pollDashScopeTask(baseUrl, config.imageApiKey, taskId);
       }
 
       const results = Array.isArray(output.results) ? output.results : [];
       const first = (results[0] ?? {}) as Record<string, any>;
       if (typeof first.url === "string" && first.url) {
+        logInfo(
+          "image",
+          `response candidate=${candidate.kind} status=200 url=${first.url}`,
+        );
         return first.url;
       }
       if (typeof first.b64_json === "string" && first.b64_json) {
+        logInfo(
+          "image",
+          `response candidate=${candidate.kind} status=200 b64_json_len=${first.b64_json.length}`,
+        );
         return `data:image/jpeg;base64,${first.b64_json}`;
       }
 
@@ -323,9 +349,17 @@ export async function generateImage(prompt: string): Promise<string> {
     if (items.length > 0) {
       const item = items[0];
       if (item.b64_json) {
+        logInfo(
+          "image",
+          `response candidate=${candidate.kind} status=200 b64_json_len=${item.b64_json.length}`,
+        );
         return `data:image/jpeg;base64,${item.b64_json}`;
       }
       if (item.url) {
+        logInfo(
+          "image",
+          `response candidate=${candidate.kind} status=200 url=${item.url}`,
+        );
         return item.url;
       }
     }

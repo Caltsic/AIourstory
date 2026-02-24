@@ -89,6 +89,8 @@ export default function HomeScreen() {
   function renderStoryCard({ item }: { item: Story }) {
     const genreColor = GENRE_COLORS[item.genre] || GENRE_COLORS["自定义"];
     const segmentCount = item.segments.length;
+    const isGenerating = item.storyGenerationStatus === "generating";
+    const isFailed = item.storyGenerationStatus === "failed";
     return (
       <TouchableOpacity
         activeOpacity={0.7}
@@ -114,6 +116,16 @@ export default function HomeScreen() {
         <Text style={[styles.cardPremise, { color: colors.muted }]} numberOfLines={2}>
           {item.premise}
         </Text>
+        {isGenerating ? (
+          <Text style={[styles.genHint, { color: colors.primary }]} numberOfLines={1}>
+            剧情生成中...（可先返回，完成后会写入存档）
+          </Text>
+        ) : null}
+        {isFailed ? (
+          <Text style={[styles.genHint, { color: colors.error }]} numberOfLines={2}>
+            生成失败：{item.lastStoryGenerationError || "未知错误"}
+          </Text>
+        ) : null}
         <View style={styles.cardFooter}>
           <View style={styles.cardMeta}>
             <IconSymbol name="text.bubble.fill" size={14} color={colors.muted} />
@@ -238,6 +250,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 12,
+  },
+  genHint: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: -6,
+    marginBottom: 12,
+    fontWeight: "600",
   },
   cardFooter: {
     flexDirection: "row",

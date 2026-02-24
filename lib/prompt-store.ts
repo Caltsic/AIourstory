@@ -12,6 +12,7 @@ import {
   RANDOMIZE_SYSTEM_PROMPT,
   EVALUATE_ACTION_SYSTEM_PROMPT,
   CHARACTER_PORTRAIT_SYSTEM_PROMPT,
+  EVALUATE_CONTINUATION_SYSTEM_PROMPT,
 } from "./llm-prompts";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -23,7 +24,8 @@ export type PromptKey =
   | "IMAGE_PROMPT_SYSTEM_PROMPT"
   | "RANDOMIZE_SYSTEM_PROMPT"
   | "EVALUATE_ACTION_SYSTEM_PROMPT"
-  | "CHARACTER_PORTRAIT_SYSTEM_PROMPT";
+  | "CHARACTER_PORTRAIT_SYSTEM_PROMPT"
+  | "EVALUATE_CONTINUATION_SYSTEM_PROMPT";
 
 export type PromptSet = Record<PromptKey, string>;
 
@@ -53,9 +55,13 @@ export const PROMPT_KEYS: PromptKey[] = [
   "RANDOMIZE_SYSTEM_PROMPT",
   "EVALUATE_ACTION_SYSTEM_PROMPT",
   "CHARACTER_PORTRAIT_SYSTEM_PROMPT",
+  "EVALUATE_CONTINUATION_SYSTEM_PROMPT",
 ];
 
-export const PROMPT_META: Record<PromptKey, { label: string; description: string }> = {
+export const PROMPT_META: Record<
+  PromptKey,
+  { label: string; description: string }
+> = {
   STORY_SYSTEM_PROMPT: {
     label: "故事生成",
     description: "初始故事生成时使用的系统提示词",
@@ -84,6 +90,10 @@ export const PROMPT_META: Record<PromptKey, { label: string; description: string
     label: "角色立绘",
     description: "根据角色信息生成人物形象绘画提示词",
   },
+  EVALUATE_CONTINUATION_SYSTEM_PROMPT: {
+    label: "续写评估",
+    description: "评估本轮续写质量并给出下轮改进建议",
+  },
 };
 
 // ─── Storage Keys ───────────────────────────────────────────────────
@@ -103,6 +113,7 @@ export function getDefaultPrompts(): PromptSet {
     RANDOMIZE_SYSTEM_PROMPT,
     EVALUATE_ACTION_SYSTEM_PROMPT,
     CHARACTER_PORTRAIT_SYSTEM_PROMPT,
+    EVALUATE_CONTINUATION_SYSTEM_PROMPT,
   };
 }
 
@@ -168,7 +179,7 @@ export async function savePreset(preset: PromptPreset): Promise<void> {
   preset.updatedAt = Date.now();
   await AsyncStorage.setItem(
     `${PRESET_KEY_PREFIX}${preset.id}`,
-    JSON.stringify(preset)
+    JSON.stringify(preset),
   );
 
   // Update index

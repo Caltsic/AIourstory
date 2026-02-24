@@ -240,3 +240,111 @@
 - [x] `lib/llm-client.ts`：新增 `evaluateInitialAffinities`，基于主角与角色关系批量评估 0-100 初始好感。
 - [x] `app/game.tsx`：在新角色入场后调用 AI 评估并覆盖初始好感值。
 - [x] `app/game.tsx`：AI 失败时保留本地关系兜底值并记录警告，不影响主流程。
+
+## 38. 本轮新增：配置编辑适配、主角性别、URL 手动填写与全链路日志
+
+### 38.1 ToDo
+
+- [x] 修复提示词编辑弹窗顶部遮挡（SafeArea + 键盘避让）。
+- [x] 修复预设编辑弹窗键盘遮挡（键盘避让）。
+- [x] 新增主角性别字段（存档迁移 + 创建页输入 + LLM 透传）。
+- [x] 取消 LLM 与生图 URL 的自动路径拼接（用户填完整 endpoint）。
+- [x] 将 LLM/生图请求与响应摘要写入日志（用于格式排障）。
+- [x] 统一系统提示词中的节奏下限数字。
+- [x] 回归验证 `pnpm run check`。
+
+### 38.2 Result
+
+- [x] `app/(tabs)/prompts.tsx`、`app/prompt-settings.tsx`：编辑弹窗改为 SafeArea + `KeyboardAvoidingView`，不再遮挡。
+- [x] `lib/story-store.ts`、`app/create-story.tsx`、`app/game.tsx`、`lib/llm-client.ts`：新增并透传 `protagonistGender`。
+- [x] `lib/llm-client.ts`、`lib/image-client.ts`：不再自动补全路径，完全使用用户填写 URL。
+- [x] `lib/llm-client.ts`、`lib/image-client.ts`：记录每次请求/响应摘要到 `app-logger`。
+- [x] `lib/llm-prompts.ts`：节奏字符下限已同步为 1600/1200/900/600。
+
+## 39. 本轮新增：剧情生成跨页面不串 UI（最小改动）
+
+### 39.1 ToDo
+
+- [x] `Story` 增加剧情生成状态字段与迁移默认值。
+- [x] `game` 生成/续写增加 token+storyId UI 守卫（只限制 UI 更新，不影响落盘）。
+- [x] 生成开始/成功/失败写入存档状态（仅保留最后一次 error）。
+- [x] 主页面故事卡片展示 generating/failed 状态与错误摘要。
+- [x] 回归验证 `pnpm run check` 与 `pnpm test`。
+
+### 39.2 Result
+
+- [x] `lib/story-store.ts`：新增 `storyGenerationStatus` 与 `lastStoryGenerationError`，并在迁移与新建存档中初始化。
+- [x] `app/game.tsx`：为初始生成/续写引入 token+storyId UI 守卫，避免异步回写污染其他故事 UI。
+- [x] `app/game.tsx`：生成状态写入存档（generating/idle/failed）且只保留最后一次 error。
+- [x] `app/(tabs)/index.tsx`：故事卡片显示“生成中/失败原因”。
+
+## 40. 本轮新增：剧情续写超时阈值调整
+
+### 40.1 ToDo
+
+- [x] 将 `continueStory` 请求超时调整为 300 秒。
+- [x] 回归验证 `pnpm run check`。
+
+## 41. 本轮新增：摘要压缩并发回档修复
+
+### 41.1 ToDo
+
+- [x] 摘要回写不再裁剪 `segments`，仅更新 `storySummary/summaryHistory`。
+- [x] 续写 history 改为 `buildHistoryContext(summary + recent)`，最近剧情扩展为 25 段。
+- [x] 续写落盘改为合并写回，避免与后台摘要互相覆盖。
+- [x] segments 为空但存在摘要时，重进自动从摘要恢复续写。
+- [x] 回归验证 `pnpm run check` 与 `pnpm test`。
+
+## 42. 本轮新增：上文压缩触发时的上下文硬上限
+
+### 42.1 ToDo
+
+- [x] 摘要任务在阈值触发时立即后台启动（不等待续写完成）。
+- [x] summary 为空且超过阈值时，本轮续写 history 改为“最近 N 段”硬上限。
+- [x] 回归验证 `pnpm run check` 与 `pnpm test`。
+
+### 42.2 Result
+
+- [x] `app/game.tsx`：阈值触发时立刻启动摘要后台写入，不再依赖续写结束。
+- [x] `app/game.tsx`：summary 为空且历史过长时，本轮 history 降级为最近 12 段，避免 10k+ 发送。
+
+## 43. 本轮新增：Debug 仪表盘按字符里程碑变色
+
+### 43.1 ToDo
+
+- [x] 仪表盘颜色改为按发送字符数里程碑（阈值8000）分级，超过8000按余量进入下一周期。
+- [x] 段落窗口扩展为最多100段，并保留段落数显示。
+- [x] 保留“实际发送字符数”的显示。
+- [x] 回归验证 `pnpm run check`。
+
+## 44. 本轮新增：总结5000字节奏与50段窗口校准
+
+### 44.1 ToDo
+
+- [x] 将 `HISTORY_CONTEXT_CHARS_LIMIT` 调整为 5000。
+- [x] 保持 `SUMMARY_REFRESH_DELTA_CHARS` 与阈值一致（每 5000 字触发）。
+- [x] 将 `buildHistoryContext/buildHistoryContextBounded` 的最近段落窗口调整为 50。
+- [x] 将仪表盘段落上限同步到 50，并保留字符里程碑显示。
+- [x] 更新相关测试并回归验证 `pnpm run check` 与 `pnpm test`。
+
+## 45. 本轮新增：续写超时回调至120秒
+
+### 45.1 ToDo
+
+- [x] 将 `continueStory` 超时由 300 秒改为 120 秒。
+- [x] 回归验证 `pnpm run check`。
+
+## 46. 本轮新增：P0剧情生成长时间卡死修复
+
+### 46.1 ToDo
+
+- [x] 为 `generateStory/summarizeStory/evaluateInitialAffinities/generateSummaryTitle` 增加 120s 超时。
+- [x] `loadStory` 增加 stale generating 自动回收（>3分钟转 failed）。
+- [x] 增加 timeout 分支日志，便于定位卡死点。
+- [x] 回归验证 `pnpm run check` 与 `pnpm test`。
+
+### 46.2 Result
+
+- [x] `lib/llm-client.ts`：新增通用 `fetchWithTimeout`，并接入生成/总结/初始好感评估/总结标题链路。
+- [x] `app/game.tsx`：`loadStory` 增加遗留 generating 状态超时回收（3分钟）。
+- [x] 生成链路 timeout 分支已记录日志，便于定位具体卡死节点。

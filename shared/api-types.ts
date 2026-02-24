@@ -37,7 +37,7 @@ export interface PromptPlazaItem {
 
 export interface PromptPlazaDetail extends PromptPlazaItem {
   promptsJson: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "unpublished";
 }
 
 export interface StoryPlazaItem {
@@ -65,7 +65,7 @@ export interface StoryPlazaDetail extends StoryPlazaItem {
   protagonistAppearance: string;
   initialPacing: string;
   extraDescription: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "unpublished";
 }
 
 export interface PaginatedResult<T> {
@@ -77,7 +77,7 @@ export interface PaginatedResult<T> {
 
 export interface SubmissionItem {
   uuid: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "unpublished";
   rejectReason: string | null;
   downloadCount: number;
   likeCount: number;

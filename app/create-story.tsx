@@ -39,6 +39,7 @@ const DIFFICULTIES: DifficultyLevel[] = [
   "无随机",
 ];
 const PACES: PaceLevel[] = ["慵懒", "轻松", "紧张", "紧迫"];
+const GENDERS = ["未知", "男", "女", "非二元", "自定义"] as const;
 const DIFFICULTY_DICE_HINTS: Record<DifficultyLevel, string> = {
   简单: "简单：容错更高，失败代价相对较低。",
   普通: "普通：成败收益和代价较为平衡。",
@@ -56,6 +57,9 @@ export default function CreateStoryScreen() {
   const [premise, setPremise] = useState("");
   const [genre, setGenre] = useState("奇幻冒险");
   const [protagonistName, setProtagonistName] = useState("");
+  const [protagonistGender, setProtagonistGender] =
+    useState<(typeof GENDERS)[number]>("未知");
+  const [protagonistGenderCustom, setProtagonistGenderCustom] = useState("");
   const [protagonistDescription, setProtagonistDescription] = useState("");
   const [protagonistAppearance, setProtagonistAppearance] = useState("");
   const [difficulty, setDifficulty] = useState<DifficultyLevel>("普通");
@@ -71,6 +75,17 @@ export default function CreateStoryScreen() {
       setGenre(params.genre);
     if (typeof params.protagonistName === "string")
       setProtagonistName(params.protagonistName);
+    if (
+      typeof params.protagonistGender === "string" &&
+      params.protagonistGender
+    ) {
+      if ((GENDERS as readonly string[]).includes(params.protagonistGender)) {
+        setProtagonistGender(params.protagonistGender as any);
+      } else {
+        setProtagonistGender("自定义");
+        setProtagonistGenderCustom(params.protagonistGender);
+      }
+    }
     if (typeof params.protagonistDescription === "string") {
       setProtagonistDescription(params.protagonistDescription);
     }
@@ -139,6 +154,9 @@ export default function CreateStoryScreen() {
         premise.trim(),
         genre.trim(),
         protagonistName.trim(),
+        protagonistGender === "自定义"
+          ? protagonistGenderCustom.trim() || "未知"
+          : protagonistGender,
         protagonistDescription.trim(),
         difficulty,
         initialPacing,
@@ -160,6 +178,10 @@ export default function CreateStoryScreen() {
         premise,
         genre,
         protagonistName,
+        protagonistGender:
+          protagonistGender === "自定义"
+            ? protagonistGenderCustom.trim() || "未知"
+            : protagonistGender,
         protagonistDescription,
         protagonistAppearance,
         difficulty,
@@ -233,6 +255,50 @@ export default function CreateStoryScreen() {
             onChangeText={setProtagonistName}
             colors={colors}
           />
+
+          <Text style={[styles.label, { color: colors.foreground }]}>
+            主角性别
+          </Text>
+          <View style={styles.chipsRow}>
+            {GENDERS.map((item) => (
+              <TouchableOpacity
+                key={item}
+                onPress={() => setProtagonistGender(item)}
+                style={[
+                  styles.chip,
+                  {
+                    borderColor:
+                      protagonistGender === item
+                        ? colors.primary
+                        : colors.border,
+                    backgroundColor:
+                      protagonistGender === item
+                        ? `${colors.primary}20`
+                        : colors.surface,
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    color:
+                      protagonistGender === item
+                        ? colors.primary
+                        : colors.foreground,
+                  }}
+                >
+                  {item}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {protagonistGender === "自定义" ? (
+            <LabeledInput
+              label="自定义性别"
+              value={protagonistGenderCustom}
+              onChangeText={setProtagonistGenderCustom}
+              colors={colors}
+            />
+          ) : null}
 
           <LabeledInput
             label="主角描述"

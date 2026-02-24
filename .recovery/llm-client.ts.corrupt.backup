@@ -1,0 +1,1589 @@
+﻿/**
+ * LLM 瀹㈡埛绔? * 鐩存帴璋冪敤 OpenAI 鍏煎鐨?API锛屾棤闇€鍚庣
+ */
+
+import {
+  buildDifficultyContext,
+  buildCharacterCardsContext,
+} from "./llm-prompts";
+import { getActivePrompts } from "./prompt-store";
+import { logError, logInfo, logWarn } from "./app-logger";
+import {
+  getStorageConfig,
+  saveStorageConfig,
+  clearStorageConfig,
+  type StorageConfig,
+} from "./storage";
+import type {
+  StorySegment,
+  CharacterCard,
+  DifficultyLevel,
+  PaceLevel,
+} from "./story-store";
+import { normalizeLLMNewCharacters } from "./new-character-normalizer";
+// 鈹€鈹€鈹€ Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+// Re-export for backward compatibility
+export type { StorySegment } from "./story-store";
+// LLMConfig 宸插湪 storage.ts 涓畾涔夛紝杩欓噷瀵煎嚭浠ヤ繚鎸佸吋瀹规€?export type LLMConfig = StorageConfig;
+
+export interface GenerateStoryParams {
+  title: string;
+  premise: string;
+  genre: string;
+  protagonistName: string;
+  protagonistGender?: string;
+  protagonistDescription: string;
+  protagonistAppearance?: string;
+  difficulty: DifficultyLevel;
+  pacing?: PaceLevel;
+  characterCards?: CharacterCard[];
+}
+
+export interface ContinueStoryParams {
+  title: string;
+  genre: string;
+  premise: string;
+  history: string;
+  choiceText: string;
+  protagonistName: string;
+  protagonistGender?: string;
+  protagonistDescription: string;
+  protagonistAppearance?: string;
+  difficulty: DifficultyLevel;
+  pacing?: PaceLevel;
+  characterCards?: CharacterCard[];
+  diceOutcomeContext?: string;
+}
+
+export interface SummarizeStoryParams {
+  history: string;
+  recentTitles?: string[];
+}
+
+export interface RandomStoryConfig {
+  title: string;
+  genre: string;
+  protagonistName: string;
+  protagonistDescription: string;
+  protagonistAppearance?: string;
+  premise: string;
+}
+
+const RANDOM_GENRE_POOL = [
+  "濂囧够鍐掗櫓",
+  "鏍″洯鏃ュ父",
+  "鎮枒鎺ㄧ悊",
+  "鍙ら浠欎緺",
+  "閮藉競鎯呮劅",
+] as const;
+
+function buildFallbackProtagonistAppearance(params: {
+  genre?: string;
+  personality?: string;
+  premise?: string;
+}): string {
+  const genre = (params.genre || "").trim();
+  const personality = (params.personality || "").trim();
+  const premise = (params.premise || "").trim();
+  const seedText = `${genre}|${personality}|${premise}`;
+
+  const hair = [
+    "榛戣壊鐭彂",
+    "娣辨涓暱鍙?,
+    "閾剁伆鐭彂",
+    "鏍楄壊寰嵎鍙?,
+    "娣辫摑鍒╄惤鐭彂",
+  ];
+  const eyes = [
+    "鐏拌摑鑹茬溂鐫?,
+    "鐞ョ弨鑹茬溂鐫?,
+    "澧ㄨ壊鐪肩潧",
+    "缈犵豢鑹茬溂鐫?,
+    "鑼惰鑹茬溂鐫?,
+  ];
+  const body = ["韬舰淇暱", "鑲╄儗鎸烘嫈", "浣撴€佽交鐩?, "韬潗鍖€绉?, "鍔ㄤ綔鍒╄惤"];
+
+  const genreOutfitMap: Record<string, string[]> = {
+    濂囧够鍐掗櫓: [
+      "甯哥┛鏃呰鏂楃涓庤交鐢叉姢鑵?,
+      "甯稿鐨潻鑵板甫涓庡疄鐢ㄩ暱闈?,
+      "鎶潃鏃ф姭椋庯紝闅忚韩鎸傜潃绗︾汗灏忛グ鐗?,
+    ],
+    鏍″洯鏃ュ父: [
+      "甯歌瀛﹂櫌澶栧涓庢暣娲佽‖琛?,
+      "鍋忓ソ瀹芥澗閽堢粐琛笌鏍¤￥",
+      "鏃ュ父鏄畝娲佹牎鏈嶄笌甯嗗竷闉?,
+    ],
+    鎮枒鎺ㄧ悊: [
+      "鍋忓ソ娣辫壊椋庤。涓庝究浜庤鍔ㄧ殑闀胯￥",
+      "甯哥┛浣庤皟澶瑰厠涓庨槻婊戠煭闈?,
+      "琛ｇ潃鍏嬪埗锛屽父澶囦究鎼鸿浜嬫湰涓庢墜濂?,
+    ],
+    鍙ら浠欎緺: [
+      "韬潃绱犺壊闀胯～涓庢潫琚栧琚?,
+      "甯哥潃杞讳究閬撹涓庝簯绾归澊灞?,
+      "琛ｈ绠€闆咃紝鑵伴棿鎮寕鐜夐グ涓庨鍥?,
+    ],
+    閮藉競鎯呮劅: [
+      "鍋忓ソ绠€娲侀琛ｄ笌閫氬嫟闀胯￥",
+      "甯哥┛琛～鍙犳惌閽堢粐澶栧",
+      "鏈嶉グ鍒╄惤骞插噣锛岄厤鑹插厠鍒?,
+    ],
+  };
+
+  const personalityOutfitTweaks: Array<{ pattern: RegExp; tweak: string }> = [
+    { pattern: /(鍐烽潤|鍏嬪埗|鐞嗘€娌夌潃)/, tweak: "閰嶈壊鍋忓喎锛岀粏鑺傛敹鏁? },
+    { pattern: /(娲绘臣|澶栧悜|鐑儏|寮€鏈?/, tweak: "琛ｈ鐐圭紑鏇存槑蹇? },
+    {
+      pattern: /(璋ㄦ厧|鏁忛攼|璀︽儠|渚︽帰)/,
+      tweak: "甯告妸瀹炵敤鍙ｈ涓庝究鎼哄伐鍏峰甫鍦ㄨ韩涓?,
+    },
+    { pattern: /(娓╂煍|鍠勮壇|娌绘剤)/, tweak: "鏁翠綋姘旇川鏌斿拰锛岀嚎鏉℃洿杞? },
+  ];
+
+  const pick = (arr: string[], salt: number) => {
+    const code = seedText.charCodeAt(salt % Math.max(seedText.length, 1)) || 17;
+    const base = seedText.length * 7 + salt * 13 + code;
+    return arr[Math.abs(base) % arr.length];
+  };
+
+  const matchedOutfits = genreOutfitMap[genre] || [
+    "甯哥┛绠€娲佷究浜庤鍔ㄧ殑鏃ュ父鏈嶈",
+    "琛ｇ潃鏈寸礌鍒╄惤",
+    "鍋忓ソ浣庤皟鑰愮敤鐨勬惌閰?,
+  ];
+  const baseOutfit = pick(matchedOutfits, 4);
+  const tweak = personalityOutfitTweaks.find((item) =>
+    item.pattern.test(personality),
+  )?.tweak;
+  const finalOutfit = tweak ? `${baseOutfit}锛?{tweak}` : baseOutfit;
+
+  return `${pick(hair, 1)}锛?{pick(eyes, 2)}锛?{pick(body, 3)}锛?{finalOutfit}銆俙;
+}
+
+export interface NewCharacterData {
+  name: string;
+  hiddenName?: string;
+  knownToPlayer?: boolean;
+  gender: string;
+  personality: string;
+  background: string;
+  appearance?: string;
+}
+
+export interface EvaluateInitialAffinityParams {
+  title: string;
+  premise: string;
+  genre: string;
+  protagonistName: string;
+  protagonistGender?: string;
+  protagonistDescription: string;
+  protagonistAppearance?: string;
+  characters: Array<{
+    name: string;
+    gender: string;
+    personality: string;
+    background: string;
+    appearance?: string;
+  }>;
+}
+
+export interface SummaryResult {
+  title: string;
+  summary: string;
+  involvedCharacters: string[];
+}
+
+export interface LLMResponse {
+  segments: StorySegment[];
+  newCharacters?: NewCharacterData[];
+  pacing: PaceLevel;
+  generatedChars: number;
+  minCharsTarget: number;
+}
+
+export const PACE_MIN_CHARS: Record<PaceLevel, number> = {
+  鎱垫噿: 1600,
+  杞绘澗: 1200,
+  绱у紶: 900,
+  绱ц揩: 600,
+};
+
+const DEFAULT_LLM_TEMPERATURE = 0.7;
+
+function truncateForLog(text: string, maxChars = 2000): string {
+  const normalized = (text ?? "").toString();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}...[truncated ${normalized.length - maxChars} chars]`;
+}
+
+function formatMessagesForLog(
+  messages: Array<{ role: string; content: string }>,
+  maxChars = 2500,
+): string {
+  const joined = messages
+    .map((m) => `[${m.role}] ${m.content ?? ""}`)
+    .join("\n\n");
+  return truncateForLog(joined, maxChars);
+}
+
+function resolveConfiguredTemperature(config: LLMConfig): number {
+  const value = Number(config.temperature);
+  if (Number.isNaN(value)) return DEFAULT_LLM_TEMPERATURE;
+  return Math.max(0, Math.min(2, value));
+}
+
+const DEFAULT_PACE: PaceLevel = "杞绘澗";
+const LLM_REQUEST_TIMEOUT_MS = 120_000;
+
+class LLMRequestTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`LLM request timed out after ${ms}ms`);
+    this.name = "LLMRequestTimeoutError";
+  }
+}
+
+function isTimeoutError(error: unknown): error is LLMRequestTimeoutError {
+  return error instanceof Error && error.name === "LLMRequestTimeoutError";
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = LLM_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new LLMRequestTimeoutError(timeoutMs);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function normalizePaceLevel(value: unknown): PaceLevel {
+  if (
+    value === "鎱垫噿" ||
+    value === "杞绘澗" ||
+    value === "绱у紶" ||
+    value === "绱ц揩"
+  ) {
+    return value;
+  }
+  return DEFAULT_PACE;
+}
+
+function countSegmentsChars(segments: StorySegment[]): number {
+  return segments.reduce((sum, segment) => {
+    const main = typeof segment.text === "string" ? segment.text.length : 0;
+    const choices = Array.isArray(segment.choices)
+      ? segment.choices.join("").length
+      : 0;
+    return sum + main + choices;
+  }, 0);
+}
+
+function buildPacingConstraint(requiredPacing: PaceLevel): string {
+  const minCharsTarget = PACE_MIN_CHARS[requiredPacing];
+  const lowerBound = Math.max(200, minCharsTarget - 100);
+  const upperBound = minCharsTarget + 100;
+  return `鏈疆鑺傚鍥哄畾涓恒€?{requiredPacing}銆嶃€備綘蹇呴』杈撳嚭 pacing="${requiredPacing}"锛屼笉寰楁敼鎴愬叾浠栧€笺€俓n瀛楃鏁拌鍒欙紙缁熻 segments 鐨?text 涓?choices 鍚堣锛夛細鐩爣鍊间负 ${minCharsTarget}銆傝灏嗘€诲瓧绗︽暟鎺у埗鍦ㄧ洰鏍囬檮杩戠殑鑼冨洿锛堝缓璁?${lowerBound}~${upperBound}锛夛紝鍦ㄤ繚璇佷俊鎭瘑搴︾殑鍓嶆彁涓嬮伩鍏嶆槑鏄捐秴鍐欍€俙;
+}
+
+function buildPacingStructureConstraint(requiredPacing: PaceLevel): string {
+  if (requiredPacing === "鎱垫噿") {
+    return "缁撴瀯閰嶉锛堟帹鐞嗗悜锛夛細12-16 涓?segments锛涜嚦灏?2 娆″満鏅帹杩涳紙鏃堕棿璺宠浆/鍦扮偣杩佺Щ/灞€鍔垮崌绾ф弧瓒冲叾浜岋級锛涜嚦灏?2 鏉″彲楠岃瘉鏂扮嚎绱€? 涓柊鐭涚浘鐐广€? 娆¤瀵兼垨鍙嶈浆銆?;
+  }
+  if (requiredPacing === "杞绘澗") {
+    return "缁撴瀯閰嶉锛堟帹鐞嗗悜锛夛細10-14 涓?segments锛涜嚦灏?1 娆″満鏅帹杩?+ 1 娆″眬鍔垮彉鍖栵紱鑷冲皯 2 鏉″彲楠岃瘉鏂扮嚎绱€? 涓柊鐭涚浘鐐广€?;
+  }
+  if (requiredPacing === "绱у紶") {
+    return "缁撴瀯閰嶉锛堟帹鐞嗗悜锛夛細9-12 涓?segments锛涜嚦灏?1 娆″満鏅帹杩?+ 2 娆¤繛缁帇鍔涗簨浠讹紱鑷冲皯 1 鏉″叧閿嚎绱€? 涓吉绾跨储銆? 娆￠珮椋庨櫓璇曟帰琛屽姩銆?;
+  }
+  return "缁撴瀯閰嶉锛堟帹鐞嗗悜锛夛細8-10 涓?segments锛涜嚦灏?1 娆＄‖鍚庢灉锛堟毚闇?鍙椾激/璇佺墿鎹熷け/鍏崇郴鐮磋锛夊苟鎶涘嚭鍊掕鏃舵偓蹇碉紱鑷冲皯 1 鏉″叧閿嚎绱笌 1 涓煕鐩捐瘉璇嶃€?;
+}
+
+export const HISTORY_CONTEXT_CHARS_LIMIT = 5000;
+const CONTINUE_REQUEST_TIMEOUT_MS = 120_000;
+const HIGH_UNCERTAINTY_ACTION_PATTERNS = [
+  /灏濊瘯|璇曞浘/,
+  /寮鸿|纭棷|铔姏|鎾炲紑|鐮撮棬|鐮稿紑/,
+  /鎾攣|寮€閿亅鐮磋В|瑙ｉ攣|榛戝叆|鍏ヤ镜/,
+  /缈昏秺|鏀€鐖瑋璺充笅|娼滃叆/,
+  /韬查伩|閫冭劚|鐢╁紑|鍙嶈拷韪?,
+  /璇存湇|璋堝垽|濞佽儊|娆洪獥|浼|濂楄瘽/,
+  /鎼忔枟|鍙嶅嚮|鍒舵湇|鎶㈠ず|澶哄彇|琚嚮/,
+  /鎷嗗脊|鎬ユ晳|鎵嬫湳|淇|璋冭瘯/,
+  /璧屼竴鎶妡鍐掗櫓/,
+];
+const ROUTINE_ACTION_PATTERNS = [
+  /鎺ョ數璇潀鎵撶數璇潀鎸傜數璇?,
+  /瑙傚療|鏌ョ湅|鐜【|鐪嬪悜|鍚?,
+  /鏁查棬|寮€闂▅鍏抽棬/,
+  /璧拌繘|绂诲紑|璺熶笂|杞韩/,
+  /璇㈤棶|瀵硅瘽|鎵撴嫑鍛紎鍥炲簲/,
+  /绛夊緟|鏁寸悊|鍧愪笅|绔欒捣/,
+];
+const HIGH_RISK_CONTEXT_PATTERNS = [
+  /鍗′綇|涓婇攣|灏佹|濉岄櫡|鐖嗙偢|鐏娍|姣掓皵|杩藉叺|鍊掕鏃?,
+  /鏋獆鍒€|鍧犺惤|绐掓伅|涓瘨|閲嶄激/,
+];
+
+export function shouldRequireDiceCheck(
+  action: string,
+  contextSnippet = "",
+): boolean {
+  const actionText = (action ?? "").replace(/\s+/g, "");
+  if (!actionText) return false;
+
+  if (HIGH_UNCERTAINTY_ACTION_PATTERNS.some((rule) => rule.test(actionText))) {
+    return true;
+  }
+
+  if (ROUTINE_ACTION_PATTERNS.some((rule) => rule.test(actionText))) {
+    const ctx = (contextSnippet ?? "").replace(/\s+/g, "").slice(-220);
+    return HIGH_RISK_CONTEXT_PATTERNS.some((rule) => rule.test(ctx));
+  }
+
+  // 榛樿淇濆畧锛氭病鏈夋槑鏄鹃闄╀俊鍙锋椂锛屼笉瑙﹀彂鍒ゅ畾銆?  return false;
+}
+
+function extractJsonPayload(content: string): string {
+  const fencedMatch = content.match(/```json\s*([\s\S]*?)\s*```/i);
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
+
+  const firstBrace = content.indexOf("{");
+  if (firstBrace === -1) {
+    throw new Error("鏃犳硶瑙ｆ瀽 AI 杩斿洖鐨勫唴瀹?);
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = firstBrace; i < content.length; i++) {
+    const ch = content[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return content.slice(firstBrace, i + 1).trim();
+      }
+    }
+  }
+
+  throw new Error("鏃犳硶瑙ｆ瀽 AI 杩斿洖鐨勫唴瀹?);
+}
+
+function normalizeJsonLikeText(raw: string): string {
+  return raw
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[鈥溾€漖/g, '"')
+    .replace(/[鈥樷€橾/g, "'");
+}
+
+function replaceSingleQuotedJsonLiterals(raw: string): string {
+  const quotedKey = /([{,]\s*)'([^'\\]*(?:\\.[^'\\]*)*)'\s*:/g;
+  const quotedValue = /:\s*'([^'\\]*(?:\\.[^'\\]*)*)'(\s*[,}\]])/g;
+  let next = raw.replace(quotedKey, (_m, prefix: string, key: string) => {
+    return `${prefix}"${key.replace(/"/g, '\\"')}":`;
+  });
+  next = next.replace(
+    quotedValue,
+    (_m, value: string, suffix: string) =>
+      `: "${value.replace(/"/g, '\\"')}"${suffix}`,
+  );
+  return next;
+}
+
+function removeTrailingCommas(raw: string): string {
+  return raw.replace(/,\s*([}\]])/g, "$1");
+}
+
+function balanceJsonClosings(raw: string): string {
+  let text = raw;
+  const stack: ("}" | "]")[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      stack.push("}");
+      continue;
+    }
+    if (ch === "[") {
+      stack.push("]");
+      continue;
+    }
+    if ((ch === "}" || ch === "]") && stack.length > 0) {
+      stack.pop();
+    }
+  }
+
+  if (inString) {
+    if (escaped) text += "\\";
+    text += '"';
+  }
+  while (stack.length > 0) {
+    text += stack.pop();
+  }
+  return text;
+}
+
+function parseJsonObjectWithRecovery(content: string): any {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const pushCandidate = (value: string | null | undefined) => {
+    const normalized = (value ?? "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  let strictPayload = "";
+  try {
+    strictPayload = extractJsonPayload(content);
+    pushCandidate(strictPayload);
+  } catch {
+    // fall through with recovery candidates
+  }
+
+  const normalizedContent = normalizeJsonLikeText(content ?? "");
+  pushCandidate(normalizedContent);
+
+  const firstBrace = normalizedContent.indexOf("{");
+  if (firstBrace >= 0) {
+    pushCandidate(normalizedContent.slice(firstBrace));
+  }
+  if (strictPayload) {
+    pushCandidate(normalizeJsonLikeText(strictPayload));
+  }
+
+  const expandedCandidates = [...candidates];
+  for (const item of candidates) {
+    expandedCandidates.push(replaceSingleQuotedJsonLiterals(item));
+    expandedCandidates.push(removeTrailingCommas(item));
+    expandedCandidates.push(balanceJsonClosings(item));
+    expandedCandidates.push(
+      balanceJsonClosings(
+        removeTrailingCommas(replaceSingleQuotedJsonLiterals(item)),
+      ),
+    );
+  }
+
+  let lastError: unknown;
+  for (const candidate of expandedCandidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new SyntaxError("AI 杩斿洖鐨勪笉鏄湁鏁堢殑 JSON 鏍煎紡");
+}
+
+function splitNarrationText(text: string, maxLen = 60): string[] {
+  const normalized = text.trim();
+  if (!normalized) return [""];
+  if (normalized.length <= maxLen) return [normalized];
+
+  const parts: string[] = [];
+  let remaining = normalized;
+
+  while (remaining.length > maxLen) {
+    const candidate = remaining.slice(0, maxLen);
+    let splitAt = -1;
+    for (let i = candidate.length - 1; i >= 0; i -= 1) {
+      const ch = candidate[i];
+      if ("锛屻€傦紒锛燂紱,.!?;锛?.includes(ch)) {
+        splitAt = i + 1;
+        break;
+      }
+    }
+    if (splitAt < 20) {
+      splitAt = maxLen;
+    }
+
+    parts.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+
+  if (remaining) parts.push(remaining);
+  return parts.filter(Boolean);
+}
+
+function buildFallbackStoryResponse(requiredPacing?: PaceLevel): LLMResponse {
+  const pacing = normalizePaceLevel(requiredPacing ?? DEFAULT_PACE);
+  const segments: StorySegment[] = [
+    {
+      type: "narration",
+      text: "浣犲厛绋充綇鍛煎惛锛屽揩閫熷鐩樼幇鍦猴紝鍒ゆ柇鐪煎墠灞€鍔跨殑鐪熷疄濞佽儊銆?,
+    },
+    {
+      type: "narration",
+      text: "缁嗚妭閫愭笎娴嚭姘撮潰锛屼絾鍏抽敭绾跨储浠嶇劧闅愯棌鍦ㄩ闄╂洿楂樼殑琛屽姩閲屻€?,
+    },
+    {
+      type: "choice",
+      text: "鎺ヤ笅鏉ヤ綘瑕佹€庝箞鍋氾紵",
+      choices: [
+        "浣犲厛瑙傚療鍛ㄥ洿骞舵暣鐞嗗彲鐢ㄧ嚎绱?,
+        "浣犱富鍔ㄦ帴瑙﹀叧閿汉鐗╁苟璇曟帰鍏跺弽搴?,
+        "浣犻€夋嫨楂橀闄╄鍔ㄧ洿鎺ョ獊鐮村綋鍓嶅兊灞€",
+      ],
+      judgmentValues: [null, null, 5],
+    },
+  ];
+  return {
+    segments,
+    newCharacters: [],
+    pacing,
+    generatedChars: countSegmentsChars(segments),
+    minCharsTarget: PACE_MIN_CHARS[pacing],
+  };
+}
+
+// 鈹€鈹€鈹€ Config Management 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+/**
+ * 鑾峰彇鐢ㄦ埛閰嶇疆鐨?API 淇℃伅
+ */
+export async function getLLMConfig(): Promise<LLMConfig> {
+  return await getStorageConfig();
+}
+
+/**
+ * 淇濆瓨 API 閰嶇疆
+ */
+export async function saveLLMConfig(config: {
+  apiKey: string;
+  apiUrl: string;
+  model: string;
+  temperature?: number;
+}): Promise<void> {
+  await saveStorageConfig(config);
+}
+
+/**
+ * 娓呴櫎 API 閰嶇疆
+ */
+export async function clearLLMConfig(): Promise<void> {
+  await clearStorageConfig();
+}
+
+// 鈹€鈹€鈹€ LLM API Calls 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+/**
+ * 娴嬭瘯 API Key 鏄惁鏈夋晥
+ */
+export async function testAPIKey(
+  apiKey: string,
+  apiUrl: string,
+  model: string,
+  temperature = DEFAULT_LLM_TEMPERATURE,
+): Promise<boolean> {
+  try {
+    const url = apiUrl.trim();
+    logInfo(
+      "llm",
+      `test request url=${url} model=${model} temperature=${Math.max(0, Math.min(2, temperature))}`,
+    );
+    const startedAt = Date.now();
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: "Test",
+            },
+          ],
+          temperature: Math.max(0, Math.min(2, temperature)),
+          max_tokens: 10,
+        }),
+      },
+      30_000,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logWarn(
+        "llm",
+        `test failed status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 800)}`,
+      );
+      return false;
+    }
+
+    const data = await response.json();
+    logInfo("llm", `test ok durationMs=${Date.now() - startedAt}`);
+    return data.choices && data.choices.length > 0;
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn("llm", "test failed status=timeout durationMs=30000");
+      return false;
+    }
+    console.error("[LLM] API Key test failed:", error);
+    return false;
+  }
+}
+
+/**
+ * 鐢熸垚鍒濆鏁呬簨
+ */
+export async function generateStory(
+  params: GenerateStoryParams,
+): Promise<LLMResponse> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+  const requiredPacing = normalizePaceLevel(params.pacing ?? DEFAULT_PACE);
+  const temperature = resolveConfiguredTemperature(config);
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.STORY_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `鍒涘缓涓€涓?{params.genre}绫诲瀷鐨勬晠浜嬶紝鏍囬鏄?${params.title}"锛屽墠鎻愭槸"${params.premise}"銆傜帺瀹朵富瑙掞細${params.protagonistName}${params.protagonistGender ? `锛堟€у埆锛?{params.protagonistGender}锛塦 : ""}${params.protagonistDescription ? `锛屼富瑙掔畝浠嬶細${params.protagonistDescription}` : ""}${params.protagonistAppearance ? `锛屼富瑙掑璨岋細${params.protagonistAppearance}` : ""}銆俓n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n璇风敓鎴愬墽鎯呯墖娈碉紝姣忎釜鐗囨鍖呭惈绫诲瀷銆佽鑹诧紙瀵硅瘽鏃讹級銆佹枃鏈拰閫夐」锛堟渶鍚庝竴涓墖娈碉級銆俙,
+    },
+  ];
+
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=generateStory url=${url} model=${config.model} temperature=${temperature} max_tokens=4000` +
+      `\n${formatMessagesForLog(requestMessages)}`,
+  );
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 4000,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=generateStory status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("鍓ф儏鐢熸垚瓒呮椂锛岃閲嶈瘯锛?20绉掞級");
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=generateStory status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 1200)}`,
+    );
+    throw new Error(`API 璋冪敤澶辫触: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0]?.message?.content || "";
+
+  logInfo(
+    "llm",
+    `response kind=generateStory status=200 durationMs=${Date.now() - startedAt} contentChars=${content.length}` +
+      `\n${truncateForLog(content, 2400)}`,
+  );
+
+  return parseLLMResponse(content, requiredPacing);
+}
+
+/**
+ * 缁х画鏁呬簨
+ */
+export async function continueStory(
+  params: ContinueStoryParams,
+): Promise<LLMResponse> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+  const requiredPacing = normalizePaceLevel(params.pacing ?? DEFAULT_PACE);
+  const temperature = resolveConfiguredTemperature(config);
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.CONTINUE_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `鏁呬簨鏍囬锛?{params.title}\n绫诲瀷锛?{params.genre}\n鍓嶆彁锛?{params.premise}\n鐜╁涓昏锛?{params.protagonistName}${params.protagonistGender ? `锛堟€у埆锛?{params.protagonistGender}锛塦 : ""}${params.protagonistDescription ? `锛?{params.protagonistDescription}锛塦 : ""}${params.protagonistAppearance ? `锛屽璨岋細${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n鍓嶆儏鎻愯涓庢渶杩戝墽鎯咃細\n${params.history.trim()}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}鐢ㄦ埛閫夋嫨浜嗭細${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n璇锋牴鎹敤鎴风殑閫夋嫨缁х画鐢熸垚鏂扮殑鏁呬簨鐗囨锛屼繚鎸佸墽鎯呰繛璐€с€俙,
+    },
+  ];
+
+  let response: Response;
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=continueStory url=${url} model=${config.model} temperature=${temperature} max_tokens=4000 timeoutMs=${CONTINUE_REQUEST_TIMEOUT_MS}` +
+      `\n${formatMessagesForLog(requestMessages)}`,
+  );
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 4000,
+        }),
+      },
+      CONTINUE_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=continueStory status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("鍓ф儏鐢熸垚瓒呮椂锛岃閲嶈瘯锛堝凡鑷姩淇濇姢闀夸笂涓嬫枃锛?);
+    }
+    logError(
+      "llm",
+      `response kind=continueStory status=exception durationMs=${Date.now() - startedAt} error=${String(error)}`,
+    );
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=continueStory status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 1200)}`,
+    );
+    throw new Error(`API 璋冪敤澶辫触: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0]?.message?.content || "";
+
+  logInfo(
+    "llm",
+    `response kind=continueStory status=200 durationMs=${Date.now() - startedAt} contentChars=${content.length}` +
+      `\n${truncateForLog(content, 2400)}`,
+  );
+
+  return parseLLMResponse(content, requiredPacing);
+}
+
+/**
+ * 鐢熸垚鍓ф儏鎽樿锛堢敤浜庨暱鍓ф儏鐨勪笂涓嬫枃鍘嬬缉锛? * Returns structured summary with title and involved characters
+ */
+export async function summarizeStory(
+  params: SummarizeStoryParams,
+): Promise<SummaryResult> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.SUMMARY_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: params.recentTitles?.length
+        ? `${params.history}\n\n[杩戞湡鎬荤粨鏍囬锛堥伩鍏嶉噸澶嶏級]\n${params.recentTitles.join("\n")}`
+        : params.history,
+    },
+  ];
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=summarizeStory url=${url} model=${config.model} temperature=${temperature} max_tokens=500` +
+      `\n${formatMessagesForLog(requestMessages)}`,
+  );
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 500,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=summarizeStory status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("鍓ф儏鎬荤粨瓒呮椂锛岃绋嶅悗閲嶈瘯");
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=summarizeStory status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 1200)}`,
+    );
+    throw new Error(`鎽樿鐢熸垚澶辫触: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content?.trim() ?? "";
+
+  logInfo(
+    "llm",
+    `response kind=summarizeStory status=200 durationMs=${Date.now() - startedAt} contentChars=${content.length}` +
+      `\n${truncateForLog(content, 2400)}`,
+  );
+
+  // Try to parse as JSON first (new format)
+  try {
+    const parsed = parseJsonObjectWithRecovery(content);
+    return {
+      title: parsed.title || "",
+      summary: parsed.summary || content,
+      involvedCharacters: Array.isArray(parsed.involvedCharacters)
+        ? parsed.involvedCharacters
+        : [],
+    };
+  } catch {
+    // Fallback: treat entire content as plain summary text (backward compat)
+    return {
+      title: "",
+      summary: content,
+      involvedCharacters: [],
+    };
+  }
+}
+
+/**
+ * 涓烘憳瑕佺敓鎴愮畝鐭爣棰橈紙鐢ㄤ簬浜嬩欢鏍囩灞曠ず锛? */
+export async function generateSummaryTitle(params: {
+  summary: string;
+  recentTitles?: string[];
+}): Promise<string> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.SUMMARY_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `璇蜂负涓嬮潰杩欐鍓ф儏鎽樿鐢熸垚涓€涓笉瓒呰繃10涓瓧鐨勪腑鏂囩煭鏍囬锛岄伩鍏嶄笌杩戞湡鏍囬閲嶅銆傚彧杈撳嚭鏍囬鏈韩锛屼笉瑕佽В閲娿€俓n\n[鎽樿]\n${params.summary.trim()}\n\n[杩戞湡鏍囬]\n${(params.recentTitles ?? []).join("\n") || "锛堟棤锛?}`,
+    },
+  ];
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=generateSummaryTitle url=${url} model=${config.model} temperature=${temperature} max_tokens=30` +
+      `\n${formatMessagesForLog(requestMessages, 1400)}`,
+  );
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 30,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=generateSummaryTitle status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("鎬荤粨鏍囬鐢熸垚瓒呮椂");
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=generateSummaryTitle status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 800)}`,
+    );
+    throw new Error(`鏍囬鐢熸垚澶辫触: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const rawTitle: string = data.choices[0]?.message?.content?.trim() ?? "";
+  logInfo(
+    "llm",
+    `response kind=generateSummaryTitle status=200 durationMs=${Date.now() - startedAt} title=${rawTitle.replace(/\s+/g, " ").slice(0, 30)}`,
+  );
+  return rawTitle
+    .replace(/["鈥溾€?`]/g, "")
+    .trim()
+    .slice(0, 10);
+}
+
+/**
+ * 闅忔満鐢熸垚鏁呬簨璁惧畾
+ */
+export async function randomizeStory(): Promise<RandomStoryConfig> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
+  const randomBucket = Math.floor(Math.random() * 5) + 1;
+  const targetGenre = RANDOM_GENRE_POOL[randomBucket - 1];
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.RANDOMIZE_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `璇峰熀浜庨鏉愩€?{targetGenre}銆嶇敓鎴愪竴濂楁晠浜嬭瀹氥€傚繀椤讳娇鐢ㄨ棰樻潗锛屼笉瑕佹敼鎴愬叾浠栭鏉愩€傞粯璁ら伩鍏嶇‖绉戝够鏈涓庣敓鍍讳笓涓氳瘝锛岃瑷€鑷劧鍙ｈ鍖栥€俙,
+    },
+  ];
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=randomizeStory url=${url} model=${config.model} temperature=${temperature} max_tokens=600` +
+      `\n${formatMessagesForLog(requestMessages, 1600)}`,
+  );
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 600,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=randomizeStory status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("闅忔満璁惧畾鐢熸垚瓒呮椂");
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=randomizeStory status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 1200)}`,
+    );
+    throw new Error(`闅忔満鐢熸垚澶辫触: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content ?? "";
+  logInfo(
+    "llm",
+    `response kind=randomizeStory status=200 durationMs=${Date.now() - startedAt} contentChars=${content.length}` +
+      `\n${truncateForLog(content, 2400)}`,
+  );
+
+  try {
+    const parsed = parseJsonObjectWithRecovery(content) as RandomStoryConfig;
+    if (!parsed.title || !parsed.premise || !parsed.protagonistName) {
+      throw new Error("杩斿洖瀛楁涓嶅畬鏁?);
+    }
+    return {
+      ...parsed,
+      genre: targetGenre,
+      protagonistAppearance:
+        parsed.protagonistAppearance?.trim() ||
+        buildFallbackProtagonistAppearance({
+          genre: targetGenre,
+          personality: parsed.protagonistDescription,
+          premise: parsed.premise,
+        }),
+    };
+  } catch {
+    throw new Error("AI 杩斿洖鐨勮瀹氭牸寮忎笉姝ｇ‘锛岃閲嶈瘯");
+  }
+}
+
+/**
+ * 鏍规嵁鍓ф儏鎽樿鐢熸垚鍥剧墖鎻愮ず璇嶏紙鑻辨枃锛? */
+export async function generateImagePrompt(summary: string): Promise<string> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.IMAGE_PROMPT_SYSTEM_PROMPT },
+    { role: "user", content: `鍓ф儏鎽樿锛歕n${summary}` },
+  ];
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=generateImagePrompt url=${url} model=${config.model} temperature=${temperature} max_tokens=200` +
+      `\n${formatMessagesForLog(requestMessages, 1800)}`,
+  );
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 200,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=generateImagePrompt status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("鍥剧墖鎻愮ず璇嶇敓鎴愯秴鏃?);
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=generateImagePrompt status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 1200)}`,
+    );
+    throw new Error(`鍥剧墖鎻愮ず璇嶇敓鎴愬け璐? ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content?.trim() ?? "";
+  logInfo(
+    "llm",
+    `response kind=generateImagePrompt status=200 durationMs=${Date.now() - startedAt} contentChars=${content.length}` +
+      `\n${truncateForLog(content, 1200)}`,
+  );
+  return content;
+}
+
+/**
+ * 瑙ｆ瀽 LLM 杩斿洖鐨?JSON 鍝嶅簲
+ */
+function parseLLMResponse(
+  content: string,
+  requiredPacing?: PaceLevel,
+  options: { allowFallback?: boolean } = {},
+): LLMResponse {
+  try {
+    const parsed = parseJsonObjectWithRecovery(content);
+
+    // 楠岃瘉杩斿洖鐨勬暟鎹粨鏋?    if (!Array.isArray(parsed.segments)) {
+      throw new Error("AI 杩斿洖鐨勬暟鎹牸寮忎笉姝ｇ‘锛氱己灏?segments 鏁扮粍");
+    }
+
+    // 楠岃瘉姣忎釜鐗囨鐨勭粨鏋?    const normalizedSegments: StorySegment[] = [];
+
+    for (const segment of parsed.segments) {
+      if (!segment.type) {
+        throw new Error("AI 杩斿洖鐨勬暟鎹牸寮忎笉姝ｇ‘锛氱墖娈电己灏?type 瀛楁");
+      }
+
+      // choice 绫诲瀷鍏佽 text 涓虹┖锛圓I 鍙兘鍙彁渚?choices 鏁扮粍锛?      if (!segment.text) {
+        if (segment.type === "choice") {
+          segment.text = "";
+        } else {
+          throw new Error("AI 杩斿洖鐨勬暟鎹牸寮忎笉姝ｇ‘锛氱墖娈电己灏?text 瀛楁");
+        }
+      }
+
+      if (segment.type === "dialogue" && !segment.character) {
+        throw new Error("AI 杩斿洖鐨勬暟鎹牸寮忎笉姝ｇ‘锛氬璇濈墖娈电己灏?character 瀛楁");
+      }
+
+      if (segment.type === "choice" && !Array.isArray(segment.choices)) {
+        throw new Error("AI 杩斿洖鐨勬暟鎹牸寮忎笉姝ｇ‘锛氶€夋嫨鐗囨缂哄皯 choices 鏁扮粍");
+      }
+
+      // Validate and clamp judgmentValues for choice segments
+      if (segment.type === "choice" && segment.choices) {
+        if (Array.isArray(segment.judgmentValues)) {
+          // Ensure length matches choices
+          if (segment.judgmentValues.length !== segment.choices.length) {
+            segment.judgmentValues = segment.choices.map(() => null);
+          }
+          // Clamp numeric values to 1-8, keep null as-is
+          segment.judgmentValues = segment.judgmentValues.map(
+            (v: number | null, idx: number) => {
+              const choiceText = segment.choices?.[idx] ?? "";
+              if (!shouldRequireDiceCheck(choiceText)) {
+                return null;
+              }
+              return v === null || v === undefined
+                ? null
+                : Math.max(1, Math.min(8, Math.round(v)));
+            },
+          );
+        }
+        // judgmentValues may be absent in 鏃犻殢鏈?mode 鈥?that's fine
+      }
+
+      if (segment.type === "narration" && typeof segment.text === "string") {
+        const chunks = splitNarrationText(segment.text, 60);
+        for (const chunk of chunks) {
+          normalizedSegments.push({ ...segment, text: chunk });
+        }
+        continue;
+      }
+
+      normalizedSegments.push(segment);
+    }
+
+    // Extract newCharacters if present
+    const newCharacters: NewCharacterData[] = normalizeLLMNewCharacters(
+      parsed.newCharacters,
+      (message) => logWarn("llm", `parseLLMResponse: ${message}`),
+    );
+
+    const parsedPacing = normalizePaceLevel(parsed.pacing);
+    const pacing = parsedPacing;
+    const validationPacing = requiredPacing ?? parsedPacing;
+    const generatedChars = countSegmentsChars(normalizedSegments);
+    const minCharsTarget = PACE_MIN_CHARS[validationPacing];
+
+    return {
+      segments: normalizedSegments,
+      newCharacters,
+      pacing,
+      generatedChars,
+      minCharsTarget,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (options.allowFallback) {
+      logWarn("llm", `parseLLMResponse failed, fallback enabled: ${message}`);
+      return buildFallbackStoryResponse(requiredPacing);
+    }
+    throw new Error(`AI 杩斿洖鏁版嵁瑙ｆ瀽澶辫触锛?{message}`);
+  }
+}
+
+/**
+ * 璇勪及鑷畾涔夎鍔ㄧ殑鍒ゅ畾鍊硷紙杞婚噺 API 璋冪敤锛? */
+export async function evaluateCustomAction(
+  action: string,
+  history: string,
+  difficulty: DifficultyLevel,
+  protagonistName?: string,
+  protagonistDescription?: string,
+): Promise<number> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const contextSnippet = history.slice(-220);
+
+  const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.EVALUATE_ACTION_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `涓昏锛?{protagonistName}${protagonistDescription ? `锛?{protagonistDescription}锛塦 : ""}` : ""}\n\n鏈€杩戝墽鎯咃細\n${history.slice(-500)}\n\n鐜╁鑷畾涔夎鍔細"${action}"\n\n璇ヨ鍔ㄤ负鐜╁涓诲姩杈撳叆鐨勮嚜瀹氫箟琛屽姩锛屽繀椤荤粰鍑?1-8 鐨勫垽瀹氬€硷紝涓嶅厑璁歌緭鍑?null銆傚彧杈撳嚭鏁板瓧锛屼笉瑕佽В閲娿€俙,
+    },
+  ];
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=evaluateCustomAction url=${url} model=${config.model} temperature=${temperature} max_tokens=10` +
+      `\n${formatMessagesForLog(requestMessages, 1400)}`,
+  );
+
+  const fallbackByDifficulty: Record<DifficultyLevel, number> = {
+    绠€鍗? 3,
+    鏅€? 4,
+    鍥伴毦: 5,
+    鍣╂ⅵ: 6,
+    鏃犻殢鏈? 4,
+  };
+  const fallbackValue = shouldRequireDiceCheck(action, contextSnippet)
+    ? Math.min(8, fallbackByDifficulty[difficulty] + 1)
+    : fallbackByDifficulty[difficulty];
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 10,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=evaluateCustomAction status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      return fallbackValue;
+    }
+    logWarn(
+      "llm",
+      `response kind=evaluateCustomAction status=exception durationMs=${Date.now() - startedAt} error=${String(error)}`,
+    );
+    return fallbackValue;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=evaluateCustomAction status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 800)}`,
+    );
+    return fallbackValue;
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content?.trim() ?? "4";
+  logInfo(
+    "llm",
+    `response kind=evaluateCustomAction status=200 durationMs=${Date.now() - startedAt} content=${truncateForLog(content, 120)}`,
+  );
+  const normalized = content.toLowerCase();
+  if (normalized === "null") {
+    return fallbackValue;
+  }
+  const match = content.match(/[1-8]/);
+  const value = match ? parseInt(match[0], 10) : Number.NaN;
+  return Number.isNaN(value) ? fallbackValue : Math.max(1, Math.min(8, value));
+}
+
+/**
+ * 璇勪及鏂拌鑹插垵濮嬪ソ鎰熷害锛?-100锛? */
+export async function evaluateInitialAffinities(
+  params: EvaluateInitialAffinityParams,
+): Promise<Record<string, number>> {
+  if (!params.characters.length) return {};
+
+  const config = await getLLMConfig();
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const temperature = resolveConfiguredTemperature(config);
+  const url = config.apiUrl.trim();
+
+  const requestMessages = [
+    {
+      role: "system",
+      content:
+        "浣犳槸鍓ф儏鍏崇郴璇勪及鍣ㄣ€傝鏍规嵁涓昏涓庡嚭鍦鸿鑹茬殑鍏崇郴浜茬枏锛岃繑鍥炴瘡涓鑹插垵濮嬪ソ鎰熷害锛?-100锛夈€備粎杈撳嚭 JSON銆?,
+    },
+    {
+      role: "user",
+      content: `鏁呬簨鏍囬锛?{params.title}\n棰樻潗锛?{params.genre}\n寮€鍦猴細${params.premise}\n涓昏锛?{params.protagonistName}${params.protagonistGender ? `锛堟€у埆锛?{params.protagonistGender}锛塦 : ""}${params.protagonistDescription ? `锛?{params.protagonistDescription}锛塦 : ""}${params.protagonistAppearance ? `锛屽璨岋細${params.protagonistAppearance}` : ""}\n\n璇蜂负浠ヤ笅瑙掕壊璇勪及鍒濆濂芥劅搴︺€傝緭鍑烘牸寮忥細{ "affinities": [ { "name": "瑙掕壊鍚?, "affinity": 0-100 } ] }\n\n瑙掕壊鍒楄〃锛歕n${params.characters
+        .map(
+          (c, i) =>
+            `${i + 1}. ${c.name}锝滄€у埆:${c.gender || "鏈煡"}锝滄€ф牸:${c.personality || "鏈煡"}锝滆儗鏅?${c.background || "鏈煡"}锝滃璨?${c.appearance || "鏈彁渚?}`,
+        )
+        .join("\n")}`,
+    },
+  ];
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=evaluateInitialAffinities url=${url} model=${config.model} temperature=${temperature} max_tokens=300` +
+      `\n${formatMessagesForLog(requestMessages, 1800)}`,
+  );
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 300,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=evaluateInitialAffinities status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("鍒濆濂芥劅璇勪及瓒呮椂");
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=evaluateInitialAffinities status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 1200)}`,
+    );
+    throw new Error(`鍒濆濂芥劅璇勪及澶辫触: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content?.trim() ?? "";
+  if (!content) return {};
+
+  logInfo(
+    "llm",
+    `response kind=evaluateInitialAffinities status=200 durationMs=${Date.now() - startedAt} contentChars=${content.length}` +
+      `\n${truncateForLog(content, 1200)}`,
+  );
+
+  try {
+    const parsed = parseJsonObjectWithRecovery(content) as {
+      affinities?: Array<{ name?: string; affinity?: number }>;
+    };
+    const list = Array.isArray(parsed.affinities) ? parsed.affinities : [];
+    const mapped: Record<string, number> = {};
+    for (const item of list) {
+      const name = (item.name || "").trim();
+      if (!name) continue;
+      const affinity = Math.round(Number(item.affinity));
+      if (Number.isNaN(affinity)) continue;
+      mapped[name] = Math.max(0, Math.min(100, affinity));
+    }
+    return mapped;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 鏍规嵁瑙掕壊淇℃伅鐢熸垚瑙掕壊绔嬬粯鐨勮嫳鏂囨彁绀鸿瘝
+ */
+export async function generateCharacterPortraitPrompt(
+  character: CharacterCard,
+): Promise<string> {
+  const config = await getLLMConfig();
+
+  if (!config.apiKey) {
+    throw new Error("璇峰厛鍦ㄨ缃腑閰嶇疆 API Key");
+  }
+
+  const prompts = await getActivePrompts();
+  const temperature = resolveConfiguredTemperature(config);
+
+  const url = config.apiUrl.trim();
+  const requestMessages = [
+    { role: "system", content: prompts.CHARACTER_PORTRAIT_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: `瑙掕壊淇℃伅锛歕n濮撳悕锛?{character.name}\n鎬у埆锛?{character.gender}\n澶栬矊锛?{character.appearance || "鏈彁渚?}\n鎬ф牸锛?{character.personality}\n鑳屾櫙锛?{character.background}`,
+    },
+  ];
+  const startedAt = Date.now();
+  logInfo(
+    "llm",
+    `request kind=generateCharacterPortraitPrompt url=${url} model=${config.model} temperature=${temperature} max_tokens=300` +
+      `\n${formatMessagesForLog(requestMessages, 1400)}`,
+  );
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: requestMessages,
+          temperature,
+          max_tokens: 300,
+        }),
+      },
+      LLM_REQUEST_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn(
+        "llm",
+        `response kind=generateCharacterPortraitPrompt status=timeout durationMs=${Date.now() - startedAt}`,
+      );
+      throw new Error("瑙掕壊绔嬬粯鎻愮ず璇嶇敓鎴愯秴鏃?);
+    }
+    throw error;
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logWarn(
+      "llm",
+      `response kind=generateCharacterPortraitPrompt status=${response.status} durationMs=${Date.now() - startedAt} error=${truncateForLog(errorText, 1200)}`,
+    );
+    throw new Error(
+      `瑙掕壊绔嬬粯鎻愮ず璇嶇敓鎴愬け璐? ${response.status} - ${errorText}`,
+    );
+  }
+
+  const data = await response.json();
+  const content: string = data.choices[0]?.message?.content?.trim() ?? "";
+  logInfo(
+    "llm",
+    `response kind=generateCharacterPortraitPrompt status=200 durationMs=${Date.now() - startedAt} contentChars=${content.length}` +
+      `\n${truncateForLog(content, 1200)}`,
+  );
+  return content;
+}
+

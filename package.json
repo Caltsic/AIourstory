@@ -1,6 +1,6 @@
 {
   "name": "app-template",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
@@ -9,8 +9,8 @@
     "lint": "expo lint",
     "format": "prettier --write .",
     "test": "vitest run",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "qr": "node scripts/generate_qr.mjs"
   },
   "dependencies": {

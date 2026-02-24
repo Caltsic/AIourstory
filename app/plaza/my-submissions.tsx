@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
@@ -7,10 +15,11 @@ import { useColors } from "@/hooks/use-colors";
 import { listMyPromptSubmissions, listMyStorySubmissions } from "@/lib/plaza-api";
 
 type Tab = "prompts" | "stories";
+type SubmissionStatus = "pending" | "approved" | "rejected" | "unpublished";
 
 type Submission = {
   uuid: string;
-  status: "pending" | "approved" | "rejected";
+  status: SubmissionStatus;
   rejectReason: string | null;
   likeCount: number;
   downloadCount: number;
@@ -18,6 +27,13 @@ type Submission = {
   name?: string;
   title?: string;
 };
+
+function formatStatusLabel(status: SubmissionStatus, reason?: string | null): string {
+  if (status === "pending") return "审核中";
+  if (status === "approved") return "已通过";
+  if (status === "unpublished") return `已下架${reason ? ` (${reason})` : ""}`;
+  return `已驳回${reason ? ` (${reason})` : ""}`;
+}
 
 export default function MySubmissionsScreen() {
   const colors = useColors();
@@ -32,6 +48,7 @@ export default function MySubmissionsScreen() {
   async function loadData(isRefresh = false) {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
+
     try {
       const [prompts, stories] = await Promise.all([listMyPromptSubmissions(), listMyStorySubmissions()]);
       setPromptItems(prompts as Submission[]);
@@ -50,7 +67,7 @@ export default function MySubmissionsScreen() {
 
   return (
     <ScreenContainer>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}> 
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={{ color: colors.primary, fontWeight: "700" }}>关闭</Text>
         </TouchableOpacity>
@@ -58,18 +75,22 @@ export default function MySubmissionsScreen() {
         <View style={{ width: 32 }} />
       </View>
 
-      <View style={[styles.segmentWrap, { borderColor: colors.border, backgroundColor: colors.surface }]}> 
+      <View style={[styles.segmentWrap, { borderColor: colors.border, backgroundColor: colors.surface }]}>
         <TouchableOpacity
           style={[styles.segment, tab === "prompts" && { backgroundColor: colors.primary }]}
           onPress={() => setTab("prompts")}
         >
-          <Text style={[styles.segmentText, { color: tab === "prompts" ? "#fff" : colors.foreground }]}>提示词</Text>
+          <Text style={[styles.segmentText, { color: tab === "prompts" ? "#fff" : colors.foreground }]}>
+            提示词
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.segment, tab === "stories" && { backgroundColor: colors.primary }]}
           onPress={() => setTab("stories")}
         >
-          <Text style={[styles.segmentText, { color: tab === "stories" ? "#fff" : colors.foreground }]}>故事设置</Text>
+          <Text style={[styles.segmentText, { color: tab === "stories" ? "#fff" : colors.foreground }]}>
+            故事设置
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -85,14 +106,7 @@ export default function MySubmissionsScreen() {
           {list.map((item) => (
             <View key={item.uuid} style={[styles.card, { borderColor: colors.border, backgroundColor: colors.surface }]}>
               <Text style={[styles.cardTitle, { color: colors.foreground }]}>{item.name || item.title || item.uuid}</Text>
-              <Text style={{ color: colors.muted }}>
-                状态：
-                {item.status === "pending"
-                  ? "审核中"
-                  : item.status === "approved"
-                    ? "已通过"
-                    : `已驳回${item.rejectReason ? ` (${item.rejectReason})` : ""}`}
-              </Text>
+              <Text style={{ color: colors.muted }}>状态：{formatStatusLabel(item.status, item.rejectReason)}</Text>
               <Text style={{ color: colors.muted, marginTop: 4 }}>
                 下载 {item.downloadCount} · 点赞 {item.likeCount}
               </Text>

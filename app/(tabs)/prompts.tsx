@@ -8,6 +8,7 @@ import {
   TextInput,
   ScrollView,
   Modal,
+  KeyboardAvoidingView,
   Platform,
 } from "react-native";
 import { Image } from "expo-image";
@@ -514,48 +515,60 @@ export default function PromptsScreen() {
         animationType="slide"
         onRequestClose={() => setEditingKey(null)}
       >
-        <View style={[styles.modalFull, { backgroundColor: colors.background }]}>
-          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setEditingKey(null)}>
-              <Text style={[styles.modalAction, { color: colors.muted }]}>取消</Text>
-            </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-              {editingKey ? PROMPT_META[editingKey].label : ""}
-            </Text>
-            <TouchableOpacity onPress={savePromptEdit}>
-              <Text style={[styles.modalAction, { color: colors.primary }]}>保存</Text>
-            </TouchableOpacity>
-          </View>
-
-          {editingKey && (
-            <Text style={[styles.editorDesc, { color: colors.muted }]}>
-              {PROMPT_META[editingKey].description}
-            </Text>
-          )}
-
-          <TextInput
-            style={[styles.editorInput, {
-              color: colors.foreground,
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-            }]}
-            value={editingText}
-            onChangeText={setEditingText}
-            multiline
-            textAlignVertical="top"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
-          <TouchableOpacity
-            onPress={resetPromptToDefault}
-            style={[styles.resetButton, { borderColor: colors.border }]}
+        <ScreenContainer edges={["top", "bottom", "left", "right"]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={[styles.modalFull, { backgroundColor: colors.background }]}
           >
-            <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>
-              恢复此项默认值
-            </Text>
-          </TouchableOpacity>
-        </View>
+            <View
+              style={[styles.modalHeader, { borderBottomColor: colors.border }]}
+            >
+              <TouchableOpacity onPress={() => setEditingKey(null)}>
+                <Text style={[styles.modalAction, { color: colors.muted }]}>取消</Text>
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: colors.foreground }]}>
+                {editingKey ? PROMPT_META[editingKey].label : ""}
+              </Text>
+              <TouchableOpacity onPress={savePromptEdit}>
+                <Text style={[styles.modalAction, { color: colors.primary }]}>保存</Text>
+              </TouchableOpacity>
+            </View>
+
+            {editingKey ? (
+              <Text style={[styles.editorDesc, { color: colors.muted }]}>
+                {PROMPT_META[editingKey].description}
+              </Text>
+            ) : null}
+
+            <TextInput
+              style={[
+                styles.editorInput,
+                {
+                  color: colors.foreground,
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                },
+              ]}
+              value={editingText}
+              onChangeText={setEditingText}
+              multiline
+              textAlignVertical="top"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <TouchableOpacity
+              onPress={resetPromptToDefault}
+              style={[styles.resetButton, { borderColor: colors.border }]}
+            >
+              <Text
+                style={[styles.secondaryButtonText, { color: colors.foreground }]}
+              >
+                恢复此项默认值
+              </Text>
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
+        </ScreenContainer>
       </Modal>
 
       {/* ─── Preset Create/Edit Modal ──────────────────────────── */}
@@ -570,10 +583,14 @@ export default function PromptsScreen() {
           activeOpacity={1}
           onPress={() => setEditingPresetMeta(null)}
         >
-          <View
-            style={[styles.modalContent, { backgroundColor: colors.surface }]}
-            onStartShouldSetResponder={() => true}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={{ width: "100%" }}
           >
+            <View
+              style={[styles.modalContent, { backgroundColor: colors.surface }]}
+              onStartShouldSetResponder={() => true}
+            >
             <Text style={[styles.modalTitle, { color: colors.foreground, marginBottom: 16 }]}>
               {editingPresetMeta?.id ? "编辑预设" : "新建预设"}
             </Text>
@@ -622,7 +639,8 @@ export default function PromptsScreen() {
                 <Text style={styles.primaryButtonText}>保存</Text>
               </TouchableOpacity>
             </View>
-          </View>
+            </View>
+          </KeyboardAvoidingView>
         </TouchableOpacity>
       </Modal>
     </ScreenContainer>
@@ -833,7 +851,6 @@ const styles = StyleSheet.create({
   // Prompt editor modal
   modalFull: {
     flex: 1,
-    paddingTop: Platform.OS === "ios" ? 50 : 20,
   },
   modalHeader: {
     flexDirection: "row",

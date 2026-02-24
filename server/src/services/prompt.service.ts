@@ -1,5 +1,5 @@
 ﻿import { randomUUID } from "node:crypto";
-import { eq, and, like, desc, sql, or } from "drizzle-orm";
+import { eq, and, like, desc, sql, or, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { promptPresets, users, likes, downloads } from "../db/schema.js";
 import { badRequest, notFound, forbidden } from "../utils/errors.js";
@@ -35,8 +35,13 @@ export async function list(params: ListParams) {
     whereList.push(
       or(
         like(promptPresets.name, `%${search}%`),
-        like(promptPresets.description, `%${search}%`)
-      )!
+        like(promptPresets.description, `%${search}%`),
+      )!,
+    );
+  }
+  if (tags && tags.length > 0) {
+    whereList.push(
+      or(...tags.map((tag) => like(promptPresets.tags, `%"${tag}"%`)))!,
     );
   }
 
@@ -58,9 +63,12 @@ export async function list(params: ListParams) {
       downloadCount: promptPresets.downloadCount,
       likeCount: promptPresets.likeCount,
       createdAt: promptPresets.createdAt,
-      authorId: promptPresets.authorId,
+      authorUuid: users.uuid,
+      authorNickname: users.nickname,
+      authorAvatarSeed: users.avatarSeed,
     })
     .from(promptPresets)
+    .leftJoin(users, eq(users.id, promptPresets.authorId))
     .where(whereClause)
     .orderBy(orderBy)
     .limit(limit)
@@ -73,60 +81,59 @@ export async function list(params: ListParams) {
     .get();
   const total = countResult?.count ?? 0;
 
-  const items = await Promise.all(
-    rows.map(async (item) => {
-      const author = await db
-        .select({ uuid: users.uuid, nickname: users.nickname, avatarSeed: users.avatarSeed })
-        .from(users)
-        .where(eq(users.id, item.authorId))
-        .get();
+  let likedIdSet = new Set<number>();
+  if (currentUserId && rows.length > 0) {
+    const likeRows = await db
+      .select({ targetId: likes.targetId })
+      .from(likes)
+      .where(
+        and(
+          eq(likes.userId, currentUserId),
+          eq(likes.targetType, "prompt"),
+          inArray(
+            likes.targetId,
+            rows.map((item) => item.id),
+          ),
+        ),
+      );
+    likedIdSet = new Set(likeRows.map((row) => row.targetId));
+  }
 
-      const itemTags = safeJsonArray(item.tags);
-      if (tags && tags.length > 0 && !tags.some((tag) => itemTags.includes(tag))) {
-        return null;
-      }
+  const items = rows.map((item) => ({
+    uuid: item.uuid,
+    name: item.name,
+    description: item.description,
+    tags: safeJsonArray(item.tags),
+    downloadCount: item.downloadCount,
+    likeCount: item.likeCount,
+    isLiked: likedIdSet.has(item.id),
+    createdAt: item.createdAt,
+    author: {
+      uuid: item.authorUuid ?? "",
+      nickname: item.authorNickname ?? "未知",
+      avatarSeed: item.authorAvatarSeed ?? "",
+    },
+  }));
 
-      let isLiked = false;
-      if (currentUserId) {
-        const likeRecord = await db
-          .select({ id: likes.id })
-          .from(likes)
-          .where(
-            and(
-              eq(likes.userId, currentUserId),
-              eq(likes.targetType, "prompt"),
-              eq(likes.targetId, item.id)
-            )
-          )
-          .get();
-        isLiked = Boolean(likeRecord);
-      }
-
-      return {
-        uuid: item.uuid,
-        name: item.name,
-        description: item.description,
-        tags: itemTags,
-        downloadCount: item.downloadCount,
-        likeCount: item.likeCount,
-        isLiked,
-        createdAt: item.createdAt,
-        author: author ?? { uuid: "", nickname: "未知", avatarSeed: "" },
-      };
-    })
-  );
-
-  return { items: items.filter(Boolean), total, page, limit };
+  return { items, total, page, limit };
 }
 
 export async function getByUuid(uuid: string, currentUserId?: number) {
-  const preset = await db.select().from(promptPresets).where(eq(promptPresets.uuid, uuid)).get();
+  const preset = await db
+    .select()
+    .from(promptPresets)
+    .where(eq(promptPresets.uuid, uuid))
+    .get();
   if (!preset || preset.status !== "approved") {
     throw notFound("提示词预设不存在");
   }
 
   const author = await db
-    .select({ uuid: users.uuid, nickname: users.nickname, avatarSeed: users.avatarSeed })
+    .select({
+      uuid: users.uuid,
+      nickname: users.nickname,
+      avatarSeed: users.avatarSeed,
+    })
     .from(users)
     .where(eq(users.id, preset.authorId))
     .get();
@@ -140,8 +147,8 @@ export async function getByUuid(uuid: string, currentUserId?: number) {
         and(
           eq(likes.userId, currentUserId),
           eq(likes.targetType, "prompt"),
-          eq(likes.targetId, preset.id)
-        )
+          eq(likes.targetId, preset.id),
+        ),
       )
       .get();
     isLiked = Boolean(likeRecord);
@@ -164,7 +171,12 @@ export async function getByUuid(uuid: string, currentUserId?: number) {
 
 export async function create(
   authorUuid: string,
-  data: { name: string; description: string; promptsJson: string; tags: string[] }
+  data: {
+    name: string;
+    description: string;
+    promptsJson: string;
+    tags: string[];
+  },
 ) {
   const author = await getUserByUuid(authorUuid);
   if (!author) {
@@ -197,9 +209,18 @@ export async function create(
 export async function update(
   presetUuid: string,
   authorUuid: string,
-  data: { name?: string; description?: string; promptsJson?: string; tags?: string[] }
+  data: {
+    name?: string;
+    description?: string;
+    promptsJson?: string;
+    tags?: string[];
+  },
 ) {
-  const preset = await db.select().from(promptPresets).where(eq(promptPresets.uuid, presetUuid)).get();
+  const preset = await db
+    .select()
+    .from(promptPresets)
+    .where(eq(promptPresets.uuid, presetUuid))
+    .get();
   if (!preset) {
     throw notFound("提示词预设不存在");
   }
@@ -215,18 +236,28 @@ export async function update(
   const updates: Partial<typeof promptPresets.$inferInsert> = {
     updatedAt: new Date().toISOString(),
     status: "pending",
+    rejectReason: null,
+    reviewedBy: null,
+    reviewedAt: null,
   };
   if (data.name !== undefined) updates.name = data.name;
   if (data.description !== undefined) updates.description = data.description;
   if (data.promptsJson !== undefined) updates.promptsJson = data.promptsJson;
   if (data.tags !== undefined) updates.tags = JSON.stringify(data.tags);
 
-  await db.update(promptPresets).set(updates).where(eq(promptPresets.id, preset.id));
+  await db
+    .update(promptPresets)
+    .set(updates)
+    .where(eq(promptPresets.id, preset.id));
   return { uuid: presetUuid, status: "pending" as const };
 }
 
 export async function remove(presetUuid: string, authorUuid: string) {
-  const preset = await db.select().from(promptPresets).where(eq(promptPresets.uuid, presetUuid)).get();
+  const preset = await db
+    .select()
+    .from(promptPresets)
+    .where(eq(promptPresets.uuid, presetUuid))
+    .get();
   if (!preset) {
     throw notFound("提示词预设不存在");
   }
@@ -236,18 +267,32 @@ export async function remove(presetUuid: string, authorUuid: string) {
     throw forbidden("只能删除自己的预设");
   }
 
-  await db.delete(likes).where(and(eq(likes.targetType, "prompt"), eq(likes.targetId, preset.id)));
+  await db
+    .delete(likes)
+    .where(and(eq(likes.targetType, "prompt"), eq(likes.targetId, preset.id)));
   await db
     .delete(downloads)
-    .where(and(eq(downloads.targetType, "prompt"), eq(downloads.targetId, preset.id)));
+    .where(
+      and(
+        eq(downloads.targetType, "prompt"),
+        eq(downloads.targetId, preset.id),
+      ),
+    );
   await db.delete(promptPresets).where(eq(promptPresets.id, preset.id));
 
   return { success: true };
 }
 
 export async function toggleLike(presetUuid: string, userUuid: string) {
-  const preset = await db.select().from(promptPresets).where(eq(promptPresets.uuid, presetUuid)).get();
+  const preset = await db
+    .select()
+    .from(promptPresets)
+    .where(eq(promptPresets.uuid, presetUuid))
+    .get();
   if (!preset) {
+    throw notFound("提示词预设不存在");
+  }
+  if (preset.status !== "approved") {
     throw notFound("提示词预设不存在");
   }
 
@@ -256,32 +301,56 @@ export async function toggleLike(presetUuid: string, userUuid: string) {
     throw notFound("用户不存在");
   }
 
-  const existing = await db
-    .select({ id: likes.id })
-    .from(likes)
-    .where(and(eq(likes.userId, user.id), eq(likes.targetType, "prompt"), eq(likes.targetId, preset.id)))
-    .get();
+  return db.transaction(async (tx) => {
+    const deleteResult = await tx
+      .delete(likes)
+      .where(
+        and(
+          eq(likes.userId, user.id),
+          eq(likes.targetType, "prompt"),
+          eq(likes.targetId, preset.id),
+        ),
+      );
+    const deleted =
+      Number((deleteResult as { rowsAffected?: number }).rowsAffected ?? 0) > 0;
 
-  if (existing) {
-    await db.delete(likes).where(eq(likes.id, existing.id));
-    await db
-      .update(promptPresets)
-      .set({ likeCount: sql`CASE WHEN ${promptPresets.likeCount} > 0 THEN ${promptPresets.likeCount} - 1 ELSE 0 END` })
-      .where(eq(promptPresets.id, preset.id));
-    return { liked: false };
-  }
+    if (deleted) {
+      await tx
+        .update(promptPresets)
+        .set({
+          likeCount: sql`CASE WHEN ${promptPresets.likeCount} > 0 THEN ${promptPresets.likeCount} - 1 ELSE 0 END`,
+        })
+        .where(eq(promptPresets.id, preset.id));
+      return { liked: false };
+    }
 
-  await db.insert(likes).values({ userId: user.id, targetType: "prompt", targetId: preset.id });
-  await db
-    .update(promptPresets)
-    .set({ likeCount: sql`${promptPresets.likeCount} + 1` })
-    .where(eq(promptPresets.id, preset.id));
-  return { liked: true };
+    const insertResult = await tx
+      .insert(likes)
+      .values({ userId: user.id, targetType: "prompt", targetId: preset.id })
+      .onConflictDoNothing();
+    const inserted =
+      Number((insertResult as { rowsAffected?: number }).rowsAffected ?? 0) > 0;
+
+    if (inserted) {
+      await tx
+        .update(promptPresets)
+        .set({ likeCount: sql`${promptPresets.likeCount} + 1` })
+        .where(eq(promptPresets.id, preset.id));
+    }
+    return { liked: true };
+  });
 }
 
 export async function recordDownload(presetUuid: string, userUuid: string) {
-  const preset = await db.select().from(promptPresets).where(eq(promptPresets.uuid, presetUuid)).get();
+  const preset = await db
+    .select()
+    .from(promptPresets)
+    .where(eq(promptPresets.uuid, presetUuid))
+    .get();
   if (!preset) {
+    throw notFound("提示词预设不存在");
+  }
+  if (preset.status !== "approved") {
     throw notFound("提示词预设不存在");
   }
 
@@ -290,25 +359,20 @@ export async function recordDownload(presetUuid: string, userUuid: string) {
     throw notFound("用户不存在");
   }
 
-  const existing = await db
-    .select({ id: downloads.id })
-    .from(downloads)
-    .where(
-      and(
-        eq(downloads.userId, user.id),
-        eq(downloads.targetType, "prompt"),
-        eq(downloads.targetId, preset.id)
-      )
-    )
-    .get();
+  await db.transaction(async (tx) => {
+    const insertResult = await tx
+      .insert(downloads)
+      .values({ userId: user.id, targetType: "prompt", targetId: preset.id })
+      .onConflictDoNothing();
+    const inserted =
+      Number((insertResult as { rowsAffected?: number }).rowsAffected ?? 0) > 0;
+    if (!inserted) return;
 
-  if (!existing) {
-    await db.insert(downloads).values({ userId: user.id, targetType: "prompt", targetId: preset.id });
-    await db
+    await tx
       .update(promptPresets)
       .set({ downloadCount: sql`${promptPresets.downloadCount} + 1` })
       .where(eq(promptPresets.id, preset.id));
-  }
+  });
 
   return getByUuid(presetUuid, user.id);
 }

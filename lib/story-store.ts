@@ -79,6 +79,7 @@ export interface Story {
   premise: string;
   genre: string;
   protagonistName: string;
+  protagonistGender: string;
   protagonistDescription: string;
   protagonistAppearance: string;
   createdAt: number;
@@ -109,12 +110,28 @@ export interface Story {
   lastImageGenerationAt?: number;
   /** History of generated image prompts and outcomes */
   imagePromptHistory: ImagePromptRecord[];
+  /** Story generation status (cross-page UX) */
+  storyGenerationStatus: "idle" | "generating" | "failed";
+  /** Last story generation error (keep only the latest) */
+  lastStoryGenerationError: string;
   /** History of generated story summaries */
   summaryHistory: StorySummaryRecord[];
   /** Difficulty setting for dice mechanics */
   difficulty: DifficultyLevel;
   /** Character cards for named NPCs */
   characterCards: CharacterCard[];
+  /** Background image zoom percent (50-150) */
+  backgroundScalePercent?: number;
+  /** Character portrait zoom percent (50-150) */
+  characterScalePercent?: number;
+  /** Last choice count checkpoint used for auto background generation */
+  autoBgChoiceCheckpoint?: number;
+  /** Evaluation feedback history for continuation quality */
+  continuationFeedbackHistory?: Array<{
+    id: string;
+    content: string;
+    createdAt: number;
+  }>;
 }
 
 // ─── Storage Keys ────────────────────────────────────────────────────
@@ -126,6 +143,15 @@ const storyKey = (id: string) => `story_${id}`;
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function safeParseJson<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 /** Build a condensed history string from segments.
@@ -152,18 +178,127 @@ export function buildHistoryContext(
   storySummary = "",
 ): string {
   if (storySummary) {
-    const recent = segments.slice(-15).map(formatHistorySegment).join("\n");
+    const recent = segments.slice(-100).map(formatHistorySegment).join("\n");
     return `[剧情摘要]\n${storySummary}\n\n[最近剧情]\n${recent}`;
   }
 
-  return segments.slice(-30).map(formatHistorySegment).join("\n");
+  return segments.slice(-100).map(formatHistorySegment).join("\n");
+}
+
+export interface BoundedHistoryContextOptions {
+  maxRecentSegments?: number;
+  maxChars?: number;
+}
+
+export interface BoundedHistoryContextResult {
+  context: string;
+  recentSegmentsIncluded: number;
+  maxRecentSegments: number;
+  maxChars: number;
+}
+
+function truncateWithMarker(text: string, maxChars: number): string {
+  const normalized = (text ?? "").toString();
+  if (normalized.length <= maxChars) return normalized;
+  if (maxChars <= 0) return "";
+  const head = Math.max(0, maxChars - 32);
+  return `${normalized.slice(0, head)}...[truncated ${normalized.length - head} chars]`;
+}
+
+/**
+ * 构建用于发送给 LLM 的上文：尽量保留摘要与最近段落，但强制限制最大字符数。
+ */
+export function buildHistoryContextBounded(
+  segments: StorySegment[],
+  storySummary = "",
+  options: BoundedHistoryContextOptions = {},
+): BoundedHistoryContextResult {
+  const maxRecentSegments = Math.max(
+    1,
+    Math.floor(options.maxRecentSegments ?? 100),
+  );
+  const maxChars = Math.max(200, Math.floor(options.maxChars ?? 5000));
+
+  const summaryText = (storySummary ?? "").trim();
+  const recentSlice = segments.slice(-maxRecentSegments);
+  const recentLines: string[] = [];
+
+  if (summaryText) {
+    const headerA = "[剧情摘要]\n";
+    const headerB = "\n\n[最近剧情]\n";
+    // Ensure summary itself doesn't blow the budget.
+    const maxSummaryChars = Math.max(
+      0,
+      maxChars - headerA.length - headerB.length - 120,
+    );
+    const summarySafe = truncateWithMarker(summaryText, maxSummaryChars);
+    const prefix = `${headerA}${summarySafe}${headerB}`;
+
+    let remaining = Math.max(0, maxChars - prefix.length);
+    let included = 0;
+    for (let i = recentSlice.length - 1; i >= 0; i--) {
+      const line = formatHistorySegment(recentSlice[i]);
+      const extra = (recentLines.length > 0 ? 1 : 0) + line.length;
+      if (extra <= remaining) {
+        recentLines.push(line);
+        remaining -= extra;
+        included += 1;
+      } else if (included === 0 && remaining > 16) {
+        recentLines.push(truncateWithMarker(line, remaining));
+        included = 1;
+        remaining = 0;
+        break;
+      } else {
+        break;
+      }
+    }
+
+    recentLines.reverse();
+    const recentText = recentLines.join("\n");
+    return {
+      context: (prefix + recentText).slice(0, maxChars),
+      recentSegmentsIncluded: included,
+      maxRecentSegments,
+      maxChars,
+    };
+  }
+
+  // No summary: only recent segments with hard char cap.
+  let remaining = maxChars;
+  let included = 0;
+  for (let i = recentSlice.length - 1; i >= 0; i--) {
+    const line = formatHistorySegment(recentSlice[i]);
+    const extra = (recentLines.length > 0 ? 1 : 0) + line.length;
+    if (extra <= remaining) {
+      recentLines.push(line);
+      remaining -= extra;
+      included += 1;
+    } else if (included === 0 && remaining > 16) {
+      recentLines.push(truncateWithMarker(line, remaining));
+      included = 1;
+      remaining = 0;
+      break;
+    } else {
+      break;
+    }
+  }
+  recentLines.reverse();
+  return {
+    context: recentLines.join("\n").slice(0, maxChars),
+    recentSegmentsIncluded: included,
+    maxRecentSegments,
+    maxChars,
+  };
 }
 
 // ─── CRUD ────────────────────────────────────────────────────────────
 
 export async function getStoryIds(): Promise<string[]> {
   const raw = await AsyncStorage.getItem(STORIES_KEY);
-  return raw ? JSON.parse(raw) : [];
+  const parsed = safeParseJson<unknown>(raw, []);
+  return Array.isArray(parsed)
+    ? parsed.filter((id) => typeof id === "string")
+    : [];
 }
 
 async function saveStoryIds(ids: string[]): Promise<void> {
@@ -196,12 +331,20 @@ function migrateStory(story: Story): Story {
   }
   if (!story.imageGenerationStatus) story.imageGenerationStatus = "idle";
   if (!story.imagePromptHistory) story.imagePromptHistory = [];
+  if (!story.storyGenerationStatus) story.storyGenerationStatus = "idle";
+  if (!story.lastStoryGenerationError) story.lastStoryGenerationError = "";
   if (!story.summaryHistory) story.summaryHistory = [];
   if (!story.currentPacing) story.currentPacing = "轻松";
   if (!story.lastGeneratedChars) story.lastGeneratedChars = 0;
   if (!story.latestGeneratedContext) story.latestGeneratedContext = "";
   if (!story.protagonistPortraitUri) story.protagonistPortraitUri = "";
   if (!story.protagonistAppearance) story.protagonistAppearance = "";
+  if (!story.protagonistGender) story.protagonistGender = "未知";
+  if (!story.backgroundScalePercent) story.backgroundScalePercent = 100;
+  if (!story.characterScalePercent) story.characterScalePercent = 100;
+  if (!story.autoBgChoiceCheckpoint) story.autoBgChoiceCheckpoint = 0;
+  if (!story.continuationFeedbackHistory)
+    story.continuationFeedbackHistory = [];
   return story;
 }
 
@@ -210,7 +353,8 @@ export async function getAllStories(): Promise<Story[]> {
   const stories: Story[] = [];
   for (const id of ids) {
     const raw = await AsyncStorage.getItem(storyKey(id));
-    if (raw) stories.push(migrateStory(JSON.parse(raw)));
+    const parsed = safeParseJson<Story | null>(raw, null);
+    if (parsed) stories.push(migrateStory(parsed));
   }
   // Sort by updatedAt descending
   stories.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -219,7 +363,8 @@ export async function getAllStories(): Promise<Story[]> {
 
 export async function getStory(id: string): Promise<Story | null> {
   const raw = await AsyncStorage.getItem(storyKey(id));
-  return raw ? migrateStory(JSON.parse(raw)) : null;
+  const parsed = safeParseJson<Story | null>(raw, null);
+  return parsed ? migrateStory(parsed) : null;
 }
 
 export async function createStory(
@@ -227,6 +372,7 @@ export async function createStory(
   premise: string,
   genre: string,
   protagonistName: string,
+  protagonistGender: string,
   protagonistDescription: string,
   difficulty: DifficultyLevel = "普通",
   initialPacing: PaceLevel = "轻松",
@@ -240,6 +386,7 @@ export async function createStory(
     premise,
     genre,
     protagonistName,
+    protagonistGender: protagonistGender?.trim() || "未知",
     protagonistDescription,
     protagonistAppearance,
     createdAt: now,
@@ -255,9 +402,15 @@ export async function createStory(
     protagonistPortraitUri: "",
     imageGenerationStatus: "idle",
     imagePromptHistory: [],
+    storyGenerationStatus: "idle",
+    lastStoryGenerationError: "",
     summaryHistory: [],
     difficulty,
     characterCards: [],
+    backgroundScalePercent: 100,
+    characterScalePercent: 100,
+    autoBgChoiceCheckpoint: 0,
+    continuationFeedbackHistory: [],
   };
   await AsyncStorage.setItem(storyKey(id), JSON.stringify(story));
   const ids = await getStoryIds();
@@ -268,10 +421,14 @@ export async function createStory(
 
 export async function updateStory(story: Story): Promise<void> {
   story.updatedAt = Date.now();
-  story.historyContext = buildHistoryContext(
+  story.historyContext = buildHistoryContextBounded(
     story.segments,
     story.storySummary,
-  );
+    {
+      maxRecentSegments: 100,
+      maxChars: 30000,
+    },
+  ).context;
   await AsyncStorage.setItem(storyKey(story.id), JSON.stringify(story));
 }
 
