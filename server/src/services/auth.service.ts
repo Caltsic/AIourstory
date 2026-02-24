@@ -8,6 +8,16 @@ import { badRequest, unauthorized, conflict, notFound } from "../utils/errors.js
 
 const BCRYPT_ROUNDS = 10;
 
+function isUsernameUniqueConflict(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : String(error ?? "");
+  return (
+    /unique/i.test(message) &&
+    (message.includes("users.username") ||
+      message.includes("users_username_unique"))
+  );
+}
+
 function hashPassword(password: string): Promise<string> {
   return new Promise((resolve, reject) => {
     bcrypt.hash(password, BCRYPT_ROUNDS, (err, hash) => {
@@ -146,18 +156,25 @@ export async function register(
 
   const passwordHash = await hashPassword(password);
 
-  await db
-    .update(users)
-    .set({
-      username,
-      passwordHash,
-      nickname: nickname || username,
-      deviceId: null,
-      isBound: true,
-      role: "user",
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(users.id, user.id));
+  try {
+    await db
+      .update(users)
+      .set({
+        username,
+        passwordHash,
+        nickname: nickname || username,
+        deviceId: null,
+        isBound: true,
+        role: "user",
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(users.id, user.id));
+  } catch (error) {
+    if (isUsernameUniqueConflict(error)) {
+      throw conflict("用户名已被占用");
+    }
+    throw error;
+  }
 
   const updatedUser = await db.select().from(users).where(eq(users.id, user.id)).get();
   if (!updatedUser) {

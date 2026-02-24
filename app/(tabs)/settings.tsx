@@ -69,6 +69,19 @@ const IMAGE_API_PRESETS = [
   { name: "Custom", apiUrl: "", model: "" },
 ];
 
+const TESTER_KEY_SALT = "ai-story-game-tester-v1";
+const TESTER_KEY_HASH = "0bb6e0bd"; // FNV-1a hash of salt + "password"
+
+function hashTesterKey(input: string) {
+  let hash = 0x811c9dc5;
+  const value = `${TESTER_KEY_SALT}:${input}`;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = (hash + (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 export default function SettingsScreen() {
   const colors = useColors();
   const router = useRouter();
@@ -339,7 +352,7 @@ export default function SettingsScreen() {
   }
 
   function handleTesterVerify() {
-    if (testerKey !== "1234567") {
+    if (hashTesterKey(testerKey.trim()) !== TESTER_KEY_HASH) {
       Alert.alert("Error", "Tester key is invalid");
       return;
     }

@@ -51,6 +51,8 @@ const reviewListQuerySchema = {
   properties: {
     status: { type: "string", enum: REVIEW_STATUSES },
     keyword: { type: "string", minLength: 1, maxLength: 100 },
+    page: { type: "string", pattern: "^[1-9]\\d*$" },
+    limit: { type: "string", pattern: "^[1-9]\\d*$" },
   },
 } as const;
 
@@ -90,6 +92,11 @@ async function findAdminUserId(adminUuid: string) {
   return adminUser?.id ?? null;
 }
 
+function parsePositiveInt(input: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(input || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export async function adminRoutes(app: FastifyInstance) {
   app.get(
     "/admin/review/stats",
@@ -124,7 +131,9 @@ export async function adminRoutes(app: FastifyInstance) {
     },
   );
 
-  app.get<{ Querystring: { status?: string; keyword?: string } }>(
+  app.get<{
+    Querystring: { status?: string; keyword?: string; page?: string; limit?: string };
+  }>(
     "/admin/review/prompts",
     {
       preHandler: [requireAdmin],
@@ -134,6 +143,9 @@ export async function adminRoutes(app: FastifyInstance) {
     async (request) => {
       const status = normalizeReviewStatus(request.query.status);
       const keyword = request.query.keyword?.trim();
+      const page = parsePositiveInt(request.query.page, 1);
+      const limit = Math.min(parsePositiveInt(request.query.limit, 20), 100);
+      const offset = (page - 1) * limit;
 
       const whereList = [eq(promptPresets.status, status)];
       if (keyword) {
@@ -147,7 +159,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
       const whereClause =
         whereList.length === 1 ? whereList[0] : and(...whereList);
-      const items = await db
+      const rows = await db
         .select({
           uuid: promptPresets.uuid,
           name: promptPresets.name,
@@ -165,9 +177,18 @@ export async function adminRoutes(app: FastifyInstance) {
         .from(promptPresets)
         .leftJoin(users, eq(users.id, promptPresets.authorId))
         .where(whereClause)
-        .orderBy(desc(promptPresets.createdAt));
+        .orderBy(desc(promptPresets.createdAt))
+        .limit(limit)
+        .offset(offset);
 
-      return items.map((item) => ({
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(promptPresets)
+        .where(whereClause)
+        .get();
+      const total = countResult?.count ?? 0;
+
+      const items = rows.map((item) => ({
         uuid: item.uuid,
         name: item.name,
         description: item.description,
@@ -183,10 +204,13 @@ export async function adminRoutes(app: FastifyInstance) {
           username: item.authorUsername ?? null,
         },
       }));
+      return { items, total, page, limit };
     },
   );
 
-  app.get<{ Querystring: { status?: string; keyword?: string } }>(
+  app.get<{
+    Querystring: { status?: string; keyword?: string; page?: string; limit?: string };
+  }>(
     "/admin/review/stories",
     {
       preHandler: [requireAdmin],
@@ -196,6 +220,9 @@ export async function adminRoutes(app: FastifyInstance) {
     async (request) => {
       const status = normalizeReviewStatus(request.query.status);
       const keyword = request.query.keyword?.trim();
+      const page = parsePositiveInt(request.query.page, 1);
+      const limit = Math.min(parsePositiveInt(request.query.limit, 20), 100);
+      const offset = (page - 1) * limit;
 
       const whereList = [eq(storySettings.status, status)];
       if (keyword) {
@@ -210,7 +237,7 @@ export async function adminRoutes(app: FastifyInstance) {
 
       const whereClause =
         whereList.length === 1 ? whereList[0] : and(...whereList);
-      const items = await db
+      const rows = await db
         .select({
           uuid: storySettings.uuid,
           title: storySettings.title,
@@ -234,9 +261,18 @@ export async function adminRoutes(app: FastifyInstance) {
         .from(storySettings)
         .leftJoin(users, eq(users.id, storySettings.authorId))
         .where(whereClause)
-        .orderBy(desc(storySettings.createdAt));
+        .orderBy(desc(storySettings.createdAt))
+        .limit(limit)
+        .offset(offset);
 
-      return items.map((item) => ({
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(storySettings)
+        .where(whereClause)
+        .get();
+      const total = countResult?.count ?? 0;
+
+      const items = rows.map((item) => ({
         uuid: item.uuid,
         title: item.title,
         premise: item.premise,
@@ -258,6 +294,7 @@ export async function adminRoutes(app: FastifyInstance) {
           username: item.authorUsername ?? null,
         },
       }));
+      return { items, total, page, limit };
     },
   );
 

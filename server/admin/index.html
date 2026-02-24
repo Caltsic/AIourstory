@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AIourStory 审核后台</title>
+    <title>AIourStory Admin Review</title>
     <style>
       :root {
         --bg: #edf2f7;
@@ -29,7 +29,7 @@
         margin: 0;
         min-height: 100vh;
         color: var(--text);
-        font-family: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-family: "IBM Plex Sans", "Noto Sans", "Segoe UI", sans-serif;
         background:
           radial-gradient(circle at 18% 14%, rgba(14, 116, 144, 0.12), transparent 36%),
           radial-gradient(circle at 82% 2%, rgba(2, 132, 199, 0.14), transparent 34%),
@@ -362,79 +362,96 @@
   <body>
     <main class="frame">
       <header class="hero">
-        <h1>AIourStory 审核后台</h1>
-        <p>支持待审处理、上线后下架与恢复，统一管理提示词和故事投稿。</p>
+        <h1>AIourStory Admin Review</h1>
+        <p>Review pending submissions and manage approved/rejected/unpublished content in one place.</p>
       </header>
 
       <section class="stack">
         <article class="card">
-          <h2 class="title">管理员登录</h2>
+          <h2 class="title">Admin Login</h2>
           <div class="row">
             <div class="field wide">
               <label for="baseUrl">API Base URL</label>
               <input id="baseUrl" value="https://8.137.71.118/v1" />
             </div>
             <div class="field">
-              <label for="username">用户名</label>
+              <label for="username">Username</label>
               <input id="username" placeholder="admin" />
             </div>
             <div class="field">
-              <label for="password">密码</label>
-              <input id="password" type="password" placeholder="请输入密码" />
+              <label for="password">Password</label>
+              <input id="password" type="password" placeholder="Enter password" />
             </div>
             <div class="field">
               <label>&nbsp;</label>
-              <button class="btn btn-primary" id="loginBtn">登录</button>
+              <button class="btn btn-primary" id="loginBtn">Login</button>
             </div>
             <div class="field">
               <label>&nbsp;</label>
-              <button class="btn btn-secondary" id="logoutBtn">退出</button>
+              <button class="btn btn-secondary" id="logoutBtn">Logout</button>
             </div>
           </div>
           <label class="remember">
             <input type="checkbox" id="rememberPwd" />
-            记住账号与密码（仅保存在当前浏览器）
+            Remember username and password in this browser
           </label>
           <p id="status" class="status-line info"></p>
         </article>
 
         <article class="card">
-          <h2 class="title">筛选与操作</h2>
+          <h2 class="title">Filters</h2>
           <div class="row">
             <div class="field">
-              <label for="typeSel">内容类型</label>
+              <label for="typeSel">Content Type</label>
               <select id="typeSel">
-                <option value="prompt">提示词</option>
-                <option value="story">故事</option>
+                <option value="prompt">Prompt</option>
+                <option value="story">Story</option>
               </select>
             </div>
             <div class="field">
-              <label for="statusSel">状态</label>
+              <label for="statusSel">Status</label>
               <select id="statusSel">
-                <option value="pending">待审核</option>
-                <option value="approved">已通过</option>
-                <option value="rejected">已驳回</option>
-                <option value="unpublished">已下架</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="unpublished">Unpublished</option>
               </select>
             </div>
             <div class="field wide">
-              <label for="keywordInput">关键词</label>
-              <input id="keywordInput" placeholder="可按标题/描述/作者关键词筛选" />
+              <label for="keywordInput">Keyword</label>
+              <input id="keywordInput" placeholder="Filter by title/description/author" />
+            </div>
+            <div class="field">
+              <label for="pageInput">Page</label>
+              <input id="pageInput" type="number" min="1" step="1" value="1" />
+            </div>
+            <div class="field">
+              <label for="limitInput">Limit</label>
+              <select id="limitInput">
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
             </div>
             <div class="field">
               <label>&nbsp;</label>
-              <button class="btn btn-primary" id="loadBtn">加载列表</button>
+              <button class="btn btn-primary" id="loadBtn">Load</button>
             </div>
+          </div>
+          <div class="row" style="margin-top: 10px; align-items: center;">
+            <button class="btn btn-secondary" id="prevPageBtn" type="button">Prev</button>
+            <button class="btn btn-secondary" id="nextPageBtn" type="button">Next</button>
+            <span id="pageInfo" style="font-size: 12px; color: var(--muted);"></span>
           </div>
         </article>
 
         <article class="card">
-          <h2 class="title">状态统计</h2>
+          <h2 class="title">Status Stats</h2>
           <div class="stat-grid" id="statsGrid"></div>
         </article>
 
         <article class="card">
-          <h2 class="title">内容列表</h2>
+          <h2 class="title">Review List</h2>
           <div id="list" class="list"></div>
         </article>
       </section>
