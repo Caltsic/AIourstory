@@ -2,6 +2,7 @@
 
 export interface ApiUser {
   uuid: string;
+  email: string | null;
   username: string | null;
   nickname: string;
   avatarSeed: string;

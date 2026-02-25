@@ -132,3 +132,33 @@
 - Removed forced timeout interruption for story generation requests in `lib/llm-client.ts`:
   - `generateStory` and `continueStory` now support `AbortSignal` and default to no timeout (`timeoutMs ?? null`).
   - cancellation remains user-driven via AbortController.
+
+## 2026-02-25 (邮箱验证码改造 - 实施前发现)
+
+- 当前账号体系主链路是设备匿名会话 + 用户名密码绑定/登录：
+  - 路由：`server/src/routes/auth.ts`
+  - 服务：`server/src/services/auth.service.ts`
+  - 客户端页面：`app/login.tsx`
+- `users` 表目前无 `email` 字段，且无验证码存储表，需新增迁移。
+- 管理端后台 `server/admin/app.js` 依赖用户名密码登录 `/auth/login`，若直接改接口会回归；需保留密码登录专用接口。
+- App 侧展示字段仍以 `username` 为主（settings/profile），改造后应切为邮箱展示并做脱敏。
+
+## 2026-02-25 (邮箱验证码改造 - 实施结果)
+
+- 后端认证接口已切换为邮箱验证码主链路：
+  - `POST /auth/send-email-code`
+  - `POST /auth/register`（绑定邮箱，需已登录匿名会话）
+  - `POST /auth/login`（邮箱验证码登录）
+- 为兼容后台管理账号，新增 `POST /auth/password-login`，并将 `server/admin/app.js` 登录请求切换到该接口。
+- 数据层新增：
+  - `users.email` 字段 + 唯一索引
+  - `email_verification_codes` 表（验证码 hash、过期时间、尝试次数、消费标记）
+  - 迁移文件 `server/src/db/migrations/0001_email_auth_upgrade.sql`
+- 鉴权服务新增 SMTP 发信与验证码风控：
+  - 60 秒重发冷却
+  - 每日发送上限
+  - 验证码有效期与最大尝试次数
+- 客户端已切换到邮箱验证码交互：
+  - `app/login.tsx` 增加发送验证码与倒计时
+  - `lib/auth-store.ts` / `lib/auth-provider.tsx` API 参数改为 `email + code`
+  - 资料与设置页展示邮箱字段。

@@ -33,10 +33,23 @@ function shouldEnableCleartextTraffic(url: string) {
 const usesCleartextTraffic =
   allowInsecureHttp || shouldEnableCleartextTraffic(defaultApiBaseUrl);
 
+function resolveAndroidVersionCode() {
+  const explicitVersionCode = process.env.ANDROID_VERSION_CODE?.trim();
+  if (explicitVersionCode) {
+    const parsed = Number.parseInt(explicitVersionCode, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  // Fallback to Unix timestamp so local release builds auto-increment.
+  return Math.floor(Date.now() / 1000);
+}
+
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
-  version: "1.0.19",
+  version: "1.0.20",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
@@ -50,6 +63,7 @@ const config: ExpoConfig = {
     },
   },
   android: {
+    versionCode: resolveAndroidVersionCode(),
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
       foregroundImage: "./assets/images/android-icon-foreground.png",

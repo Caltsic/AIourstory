@@ -382,7 +382,7 @@ export default function SettingsScreen() {
               <Text style={[styles.cardLabel, { color: colors.foreground }]}>当前身份</Text>
               <Text style={[styles.cardValue, { color: colors.muted }]}>
                 {auth.user?.isBound
-                  ? `${auth.user.nickname} (${auth.user.username || "bound"})`
+                  ? `${auth.user.nickname} (${auth.user.email || "bound"})`
                   : `${auth.user?.nickname || "匿名玩家"} (匿名)`}
               </Text>
             </View>

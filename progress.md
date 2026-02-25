@@ -136,7 +136,7 @@
 - `lib/story-store.ts` 变更：新增 `characterScalePercent` 并在迁移/新建存档设置默认值。
 - 验证：`pnpm run check` passed。
 
-## 2026-02-25 (restore generation UX/background concurrency) 
+## 2026-02-25 (restore generation UX/background concurrency)
 
 - Used planning-with-files workflow for this new request.
 - Completed targeted audit across `app/game.tsx`, `app/create-story.tsx`, `app/(tabs)/index.tsx`, `lib/story-store.ts`, `lib/llm-client.ts`, plus historical notes in `BUG.md`/`plan.md`.
@@ -155,3 +155,24 @@
 - Validation completed:
   - `pnpm run check` passed
   - `pnpm run test -- tests/story-store.test.ts` passed
+
+## 2026-02-25 (邮箱验证码注册/登录改造)
+
+- 按用户要求先完成文件化规划：已运行 session catchup，已更新 `task_plan.md` / `findings.md` / `progress.md`。
+- 已完成代码审计并确定实施路径：
+  - 新增邮箱验证码发送与校验链路
+  - 保留管理员密码登录专用接口
+  - App 登录页改为邮箱+验证码
+- 当前进入 Phase 2：后端与数据库改造。
+- 已完成 Phase 2：
+  - 新增 `users.email` 与 `email_verification_codes` 表结构。
+  - 新增迁移 `server/src/db/migrations/0001_email_auth_upgrade.sql`。
+  - 认证服务接入 SMTP 发信（`server/src/utils/mailer.ts`）与验证码限流校验。
+  - 认证路由改为邮箱验证码主链路，并新增 `/auth/password-login` 兼容后台。
+- 已完成 Phase 3：
+  - `app/login.tsx` 切换为邮箱 + 验证码 + 发送倒计时。
+  - `lib/auth-store.ts`、`lib/auth-provider.tsx` 切换到邮箱参数。
+  - 设置/资料页改为展示邮箱。
+- 已完成 Phase 4 验证：
+  - `server/pnpm run build` passed
+  - `pnpm run check` passed

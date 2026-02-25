@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  Alert,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
@@ -29,33 +36,53 @@ export default function ProfileScreen() {
 
   return (
     <ScreenContainer>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}> 
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={{ color: colors.primary, fontWeight: "700" }}>关闭</Text>
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>个人资料</Text>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+          个人资料
+        </Text>
         <View style={{ width: 32 }} />
       </View>
 
       <View style={styles.content}>
-        <Text style={{ color: colors.muted }}>UUID: {auth.user?.uuid || "-"}</Text>
-        <Text style={{ color: colors.muted }}>用户名: {auth.user?.username || "匿名"}</Text>
-        <Text style={{ color: colors.muted }}>角色: {auth.user?.role || "user"}</Text>
+        <Text style={{ color: colors.muted }}>
+          UUID: {auth.user?.uuid || "-"}
+        </Text>
+        <Text style={{ color: colors.muted }}>
+          邮箱: {auth.user?.email || "未绑定"}
+        </Text>
+        <Text style={{ color: colors.muted }}>
+          角色: {auth.user?.role || "user"}
+        </Text>
 
         <TextInput
           value={nickname}
           onChangeText={setNickname}
           placeholder="昵称"
           placeholderTextColor={colors.muted}
-          style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.surface }]}
+          style={[
+            styles.input,
+            {
+              color: colors.foreground,
+              borderColor: colors.border,
+              backgroundColor: colors.surface,
+            },
+          ]}
         />
 
         <TouchableOpacity
           onPress={handleSave}
           disabled={submitting}
-          style={[styles.primaryBtn, { backgroundColor: submitting ? colors.muted : colors.primary }]}
+          style={[
+            styles.primaryBtn,
+            { backgroundColor: submitting ? colors.muted : colors.primary },
+          ]}
         >
-          <Text style={{ color: "#fff", fontWeight: "700" }}>{submitting ? "保存中..." : "保存"}</Text>
+          <Text style={{ color: "#fff", fontWeight: "700" }}>
+            {submitting ? "保存中..." : "保存"}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -66,7 +93,9 @@ export default function ProfileScreen() {
           }}
           style={[styles.secondaryBtn, { borderColor: colors.error }]}
         >
-          <Text style={{ color: colors.error, fontWeight: "700" }}>退出到匿名账号</Text>
+          <Text style={{ color: colors.error, fontWeight: "700" }}>
+            退出到匿名账号
+          </Text>
         </TouchableOpacity>
       </View>
     </ScreenContainer>
@@ -83,7 +112,18 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 18, fontWeight: "700" },
   content: { padding: 16, gap: 10 },
-  input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
   primaryBtn: { borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  secondaryBtn: { borderWidth: 1, borderRadius: 10, paddingVertical: 12, alignItems: "center", marginTop: 8 },
+  secondaryBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 8,
+  },
 });

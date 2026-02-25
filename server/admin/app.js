@@ -469,7 +469,7 @@ async function login() {
       throw new Error("Username and password are required");
     }
 
-    const loginData = await request("/auth/login", {
+    const loginData = await request("/auth/password-login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });

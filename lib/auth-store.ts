@@ -76,7 +76,11 @@ async function delKV(key: string) {
   await SecureStore.deleteItemAsync(key);
 }
 
-async function persistAuth(auth: { accessToken: string; refreshToken: string; user: ApiUser }) {
+async function persistAuth(auth: {
+  accessToken: string;
+  refreshToken: string;
+  user: ApiUser;
+}) {
   await Promise.all([
     setKV(ACCESS_TOKEN_KEY, auth.accessToken),
     setKV(REFRESH_TOKEN_KEY, auth.refreshToken),
@@ -85,7 +89,11 @@ async function persistAuth(auth: { accessToken: string; refreshToken: string; us
 }
 
 async function clearAuthStorage() {
-  await Promise.all([delKV(ACCESS_TOKEN_KEY), delKV(REFRESH_TOKEN_KEY), delKV(AUTH_USER_KEY)]);
+  await Promise.all([
+    delKV(ACCESS_TOKEN_KEY),
+    delKV(REFRESH_TOKEN_KEY),
+    delKV(AUTH_USER_KEY),
+  ]);
 }
 
 async function loadPersistedAuth() {
@@ -181,7 +189,10 @@ export async function ensureDeviceSession() {
       if (baseCandidate !== getApiBaseUrl()) {
         setApiBaseUrl(baseCandidate);
       }
-      const response = await rawApiClient.post<AuthResult>("/auth/device-login", { deviceId });
+      const response = await rawApiClient.post<AuthResult>(
+        "/auth/device-login",
+        { deviceId },
+      );
       await applyAuthResult(response.data);
       return;
     } catch (error) {
@@ -231,7 +242,21 @@ export async function initAuth() {
   }
 }
 
-export async function registerBoundAccount(username: string, password: string, nickname?: string) {
+export async function sendEmailCode(email: string) {
+  try {
+    await rawApiClient.post<{ success: boolean }>("/auth/send-email-code", {
+      email,
+    });
+  } catch (error) {
+    throw new Error(parseApiError(error, "Send code failed"));
+  }
+}
+
+export async function registerBoundAccount(
+  email: string,
+  code: string,
+  nickname?: string,
+) {
   if (!state.accessToken) {
     throw new Error("Not authenticated");
   }
@@ -239,8 +264,8 @@ export async function registerBoundAccount(username: string, password: string, n
   try {
     const response = await rawApiClient.post<AuthResult>(
       "/auth/register",
-      { username, password, nickname },
-      { headers: { Authorization: `Bearer ${state.accessToken}` } }
+      { email, code, nickname },
+      { headers: { Authorization: `Bearer ${state.accessToken}` } },
     );
     await applyAuthResult(response.data);
     return response.data.user;
@@ -249,11 +274,11 @@ export async function registerBoundAccount(username: string, password: string, n
   }
 }
 
-export async function loginAccount(username: string, password: string) {
+export async function loginAccount(email: string, code: string) {
   try {
     const response = await rawApiClient.post<AuthResult>("/auth/login", {
-      username,
-      password,
+      email,
+      code,
     });
     await applyAuthResult(response.data);
     return response.data.user;
@@ -268,7 +293,7 @@ export async function logoutAccount() {
       await rawApiClient.post(
         "/auth/logout",
         { refreshToken: state.refreshToken },
-        { headers: { Authorization: `Bearer ${state.accessToken}` } }
+        { headers: { Authorization: `Bearer ${state.accessToken}` } },
       );
     }
   } catch {
@@ -280,7 +305,10 @@ export async function logoutAccount() {
   await ensureDeviceSession();
 }
 
-export async function updateProfile(data: { nickname?: string; avatarSeed?: string }) {
+export async function updateProfile(data: {
+  nickname?: string;
+  avatarSeed?: string;
+}) {
   const response = await apiClient.put<ApiUser>("/users/me", data);
   setState({ user: response.data });
   await setKV(AUTH_USER_KEY, JSON.stringify(response.data));
@@ -311,5 +339,3 @@ setAuthHooks({
   getAccessToken: async () => state.accessToken,
   refreshAuth: refreshAuthTokens,
 });
-
-

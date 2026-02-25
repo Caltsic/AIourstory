@@ -31,6 +31,19 @@ export const config = {
   jwtAccessExpires: process.env.JWT_ACCESS_EXPIRES || "15m",
   jwtRefreshExpires: process.env.JWT_REFRESH_EXPIRES || "30d",
 
+  smtpHost: process.env.SMTP_HOST || "smtpdm.aliyun.com",
+  smtpPort: toInt(process.env.SMTP_PORT, 465),
+  smtpSecure: toBool(process.env.SMTP_SECURE, true),
+  smtpUser: process.env.SMTP_USER || "",
+  smtpPass: process.env.SMTP_PASS || "",
+  mailFrom: process.env.MAIL_FROM || "",
+
+  emailCodeTtlSeconds: toInt(process.env.EMAIL_CODE_TTL_SECONDS, 300),
+  emailCodeCooldownSeconds: toInt(process.env.EMAIL_CODE_COOLDOWN_SECONDS, 60),
+  emailCodeDailyLimit: toInt(process.env.EMAIL_CODE_DAILY_LIMIT, 20),
+  emailCodeMaxAttempts: toInt(process.env.EMAIL_CODE_MAX_ATTEMPTS, 5),
+  emailCodeSecret: process.env.EMAIL_CODE_SECRET || jwtSecret,
+
   corsOrigins: (process.env.CORS_ORIGINS || "http://localhost:8081")
     .split(",")
     .map((s) => s.trim())

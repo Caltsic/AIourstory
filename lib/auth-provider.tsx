@@ -3,6 +3,7 @@ import {
   getAuthState,
   subscribeAuth,
   initAuth,
+  sendEmailCode,
   registerBoundAccount,
   loginAccount,
   logoutAccount,
@@ -15,10 +16,18 @@ type AuthContextValue = {
   loading: boolean;
   user: ApiUser | null;
   isBound: boolean;
-  register: (username: string, password: string, nickname?: string) => Promise<ApiUser>;
-  login: (username: string, password: string) => Promise<ApiUser>;
+  sendCode: (email: string) => Promise<void>;
+  register: (
+    email: string,
+    code: string,
+    nickname?: string,
+  ) => Promise<ApiUser>;
+  login: (email: string, code: string) => Promise<ApiUser>;
   logout: () => Promise<void>;
-  saveProfile: (data: { nickname?: string; avatarSeed?: string }) => Promise<ApiUser>;
+  saveProfile: (data: {
+    nickname?: string;
+    avatarSeed?: string;
+  }) => Promise<ApiUser>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -38,12 +47,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading: state.loading,
       user: state.user,
       isBound: Boolean(state.user?.isBound),
+      sendCode: sendEmailCode,
       register: registerBoundAccount,
       login: loginAccount,
       logout: logoutAccount,
       saveProfile: updateProfile,
     }),
-    [state.initialized, state.loading, state.user]
+    [state.initialized, state.loading, state.user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
