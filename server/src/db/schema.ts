@@ -33,6 +33,7 @@ export const users = sqliteTable(
   (table) => [
     index("idx_users_device_id").on(table.deviceId),
     index("idx_users_email").on(table.email),
+    index("idx_users_nickname").on(table.nickname),
     index("idx_users_username").on(table.username),
   ],
 );

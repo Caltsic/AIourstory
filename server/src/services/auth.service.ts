@@ -168,6 +168,29 @@ function validatePassword(password: string) {
   return value;
 }
 
+function validateNickname(nickname: string): string {
+  const value = nickname.trim();
+  if (value.length < 1 || value.length > 20) {
+    throw badRequest("昵称长度应为1-20个字符");
+  }
+  return value;
+}
+
+async function ensureBoundNicknameAvailable(
+  nickname: string,
+  excludeUserId?: number,
+) {
+  const existing = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.nickname, nickname), eq(users.isBound, true)))
+    .get();
+
+  if (existing && existing.id !== excludeUserId) {
+    throw conflict("昵称已被占用");
+  }
+}
+
 type EmailCodePurpose = "register" | "reset";
 
 async function consumeEmailCodeByPurpose(
@@ -398,6 +421,14 @@ export async function registerWithEmailCode(
   }
 
   const passwordHash = await hashPassword(finalPassword);
+  const fallbackNickname = `玩家${user.uuid.slice(0, 6)}`;
+  const finalNickname = validateNickname(
+    nickname ||
+      (user.nickname && user.nickname !== "匿名玩家"
+        ? user.nickname
+        : fallbackNickname),
+  );
+  await ensureBoundNicknameAvailable(finalNickname, user.id);
 
   try {
     await db
@@ -406,7 +437,7 @@ export async function registerWithEmailCode(
         email: normalizedEmail,
         username: null,
         passwordHash,
-        nickname: nickname || user.nickname,
+        nickname: finalNickname,
         deviceId: null,
         isBound: true,
         role: "user",
@@ -597,10 +628,11 @@ export async function updateProfile(
     updatedAt: new Date().toISOString(),
   };
   if (data.nickname !== undefined) {
-    if (data.nickname.length < 1 || data.nickname.length > 20) {
-      throw badRequest("昵称长度应为1-20个字符");
+    const normalizedNickname = validateNickname(data.nickname);
+    if (normalizedNickname !== user.nickname) {
+      await ensureBoundNicknameAvailable(normalizedNickname, user.id);
     }
-    updates.nickname = data.nickname;
+    updates.nickname = normalizedNickname;
   }
   if (data.avatarSeed !== undefined) {
     updates.avatarSeed = data.avatarSeed;
@@ -657,6 +689,8 @@ export async function register(
   }
 
   const passwordHash = await hashPassword(password);
+  const finalNickname = validateNickname(nickname || username);
+  await ensureBoundNicknameAvailable(finalNickname, user.id);
 
   try {
     await db
@@ -664,7 +698,7 @@ export async function register(
       .set({
         username,
         passwordHash,
-        nickname: nickname || username,
+        nickname: finalNickname,
         deviceId: null,
         isBound: true,
         role: "user",

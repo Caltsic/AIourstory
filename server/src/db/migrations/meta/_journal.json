@@ -15,6 +15,13 @@
       "when": 1772026200000,
       "tag": "0001_email_auth_upgrade",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772047200000,
+      "tag": "0002_unique_bound_nickname",
+      "breakpoints": true
     }
   ]
 }
