@@ -176,3 +176,31 @@
 - 已完成 Phase 4 验证：
   - `server/pnpm run build` passed
   - `pnpm run check` passed
+
+## 2026-02-25 (AI配置切换 + 广场高量保护)
+
+- 已完成设置页改造：`app/(tabs)/settings.tsx` 支持 `文本模型 | 评估模型` 点击切换，同构字段统一编辑。
+- 已完成配置层改造：`lib/storage.ts`/`lib/llm-client.ts` 新增并接入 `evalTemperature`。
+- 已完成广场高量保护改造：
+  - `server/src/routes/prompts.ts`、`server/src/routes/stories.ts` 增加 `cursor` 参数
+  - `server/src/services/prompt.service.ts`、`server/src/services/story.service.ts` 增加 newest 场景 keyset 分页与 `nextCursor`
+  - `lib/plaza-api.ts`、`shared/api-types.ts` 同步类型与参数
+- 验证通过：
+  - `server/pnpm run build` passed
+  - `pnpm run check` passed
+
+## 2026-02-25 (广场页改造 + 邮箱密码登录)
+
+- 已完成认证流程调整：
+  - 服务端 `register/login/send-email-code` 参数与语义改为邮箱密码体系
+  - 新增重置密码接口 `/auth/reset-password`
+- 已完成客户端登录页改造：
+  - 绑定邮箱：邮箱+密码+验证码
+  - 邮箱登录：邮箱+密码
+  - 忘记密码：邮箱+验证码+新密码
+- 已完成广场页接入 cursor：
+  - 列表请求支持 `cursor`
+  - 页面支持“加载更多”并显示“已加载全部”
+- 验证通过：
+  - `server/pnpm run build` passed
+  - `pnpm run check` passed

@@ -96,8 +96,11 @@ export default function SettingsScreen() {
   const [evalApiKey, setEvalApiKey] = useState("");
   const [evalApiUrl, setEvalApiUrl] = useState("");
   const [evalModel, setEvalModel] = useState("");
+  const [evalTemperature, setEvalTemperature] = useState("0.7");
   const [autoBgEveryChoices, setAutoBgEveryChoices] = useState("3");
-  const [selectedPreset, setSelectedPreset] = useState(API_PRESETS.length - 1);
+  const [activeModelScope, setActiveModelScope] = useState<"text" | "eval">("text");
+  const [selectedTextPreset, setSelectedTextPreset] = useState(API_PRESETS.length - 1);
+  const [selectedEvalPreset, setSelectedEvalPreset] = useState(API_PRESETS.length - 1);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [testing, setTesting] = useState(false);
 
@@ -133,13 +136,21 @@ export default function SettingsScreen() {
       setEvalApiKey(config.evalApiKey || "");
       setEvalApiUrl(config.evalApiUrl || config.apiUrl);
       setEvalModel(config.evalModel || config.model);
+      setEvalTemperature(String(config.evalTemperature ?? config.temperature ?? 0.7));
       setAutoBgEveryChoices(String(config.autoBackgroundEveryChoices ?? 3));
 
-      const presetIndex = API_PRESETS.findIndex(
+      const textPresetIndex = API_PRESETS.findIndex(
         (item) => item.apiUrl === config.apiUrl && item.model === config.model
       );
-      if (presetIndex >= 0) {
-        setSelectedPreset(presetIndex);
+      if (textPresetIndex >= 0) {
+        setSelectedTextPreset(textPresetIndex);
+      }
+
+      const evalPresetIndex = API_PRESETS.findIndex(
+        (item) => item.apiUrl === (config.evalApiUrl || config.apiUrl) && item.model === (config.evalModel || config.model)
+      );
+      if (evalPresetIndex >= 0) {
+        setSelectedEvalPreset(evalPresetIndex);
       }
 
       const imageConfig = await getImageConfig();
@@ -164,10 +175,19 @@ export default function SettingsScreen() {
   function handleSelectPreset(index: number) {
     const preset = API_PRESETS[index];
     if (preset.name !== "Custom") {
-      setApiUrl(preset.apiUrl);
-      setModel(preset.model);
+      if (activeModelScope === "text") {
+        setApiUrl(preset.apiUrl);
+        setModel(preset.model);
+      } else {
+        setEvalApiUrl(preset.apiUrl);
+        setEvalModel(preset.model);
+      }
     }
-    setSelectedPreset(index);
+    if (activeModelScope === "text") {
+      setSelectedTextPreset(index);
+    } else {
+      setSelectedEvalPreset(index);
+    }
     setShowPresetModal(false);
   }
 
@@ -211,6 +231,12 @@ export default function SettingsScreen() {
       return;
     }
 
+    const parsedEvalTemperature = Number(evalTemperature.trim());
+    if (Number.isNaN(parsedEvalTemperature) || parsedEvalTemperature < 0 || parsedEvalTemperature > 2) {
+      Alert.alert("错误", "评估模型温度需在 0 到 2 之间");
+      return;
+    }
+
     const parsedAutoBgEveryChoices = Number.parseInt(
       autoBgEveryChoices.trim(),
       10,
@@ -233,6 +259,7 @@ export default function SettingsScreen() {
         evalApiKey: evalApiKey.trim(),
         evalApiUrl: evalApiUrl.trim(),
         evalModel: evalModel.trim(),
+        evalTemperature: parsedEvalTemperature,
         autoBackgroundEveryChoices: parsedAutoBgEveryChoices,
       });
       logInfo("settings", "AI config saved");
@@ -244,12 +271,16 @@ export default function SettingsScreen() {
   }
 
   async function handleTestApi() {
-    if (!apiKey.trim() || !apiUrl.trim() || !model.trim()) {
+    const testApiKey = (activeModelScope === "eval" ? evalApiKey.trim() || apiKey.trim() : apiKey.trim());
+    const testApiUrl = (activeModelScope === "eval" ? evalApiUrl.trim() : apiUrl.trim());
+    const testModel = (activeModelScope === "eval" ? evalModel.trim() : model.trim());
+    const parsedTemperature = Number((activeModelScope === "eval" ? evalTemperature : temperature).trim());
+
+    if (!testApiKey || !testApiUrl || !testModel) {
       Alert.alert("错误", "请先填写完整的 AI 配置");
       return;
     }
 
-    const parsedTemperature = Number(temperature.trim());
     if (Number.isNaN(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) {
       Alert.alert("错误", "温度需在 0 到 2 之间");
       return;
@@ -258,9 +289,9 @@ export default function SettingsScreen() {
     setTesting(true);
     try {
       const ok = await testAPIKey(
-        apiKey.trim(),
-        apiUrl.trim(),
-        model.trim(),
+        testApiKey,
+        testApiUrl,
+        testModel,
         parsedTemperature,
       );
       Alert.alert("Test Result", ok ? "Connection successful" : "Connection failed, please check config");
@@ -368,6 +399,17 @@ export default function SettingsScreen() {
     Alert.alert("Notice", "Tester mode disabled");
   }
 
+  const activePresetIndex = activeModelScope === "text" ? selectedTextPreset : selectedEvalPreset;
+  const activeApiKey = activeModelScope === "text" ? apiKey : evalApiKey;
+  const activeApiUrl = activeModelScope === "text" ? apiUrl : evalApiUrl;
+  const activeModel = activeModelScope === "text" ? model : evalModel;
+  const activeTemperature = activeModelScope === "text" ? temperature : evalTemperature;
+
+  const setActiveApiKey = activeModelScope === "text" ? setApiKey : setEvalApiKey;
+  const setActiveApiUrl = activeModelScope === "text" ? setApiUrl : setEvalApiUrl;
+  const setActiveModel = activeModelScope === "text" ? setModel : setEvalModel;
+  const setActiveTemperature = activeModelScope === "text" ? setTemperature : setEvalTemperature;
+
   return (
     <ScreenContainer>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -459,6 +501,25 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.muted }]}>AI 配置</Text>
 
+          <View style={[styles.scopeTabs, { borderColor: colors.border, backgroundColor: colors.surface }]}> 
+            <TouchableOpacity
+              onPress={() => setActiveModelScope("text")}
+              style={[styles.scopeTabItem, activeModelScope === "text" && { backgroundColor: colors.primary }]}
+            >
+              <Text style={{ color: activeModelScope === "text" ? "#fff" : colors.foreground, fontWeight: "700" }}>
+                文本模型
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setActiveModelScope("eval")}
+              style={[styles.scopeTabItem, activeModelScope === "eval" && { backgroundColor: colors.primary }]}
+            >
+              <Text style={{ color: activeModelScope === "eval" ? "#fff" : colors.foreground, fontWeight: "700" }}>
+                评估模型
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
             onPress={() => setShowPresetModal(true)}
             style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
@@ -466,7 +527,7 @@ export default function SettingsScreen() {
             <View style={styles.cardRow}>
               <Text style={[styles.cardLabel, { color: colors.foreground }]}>预设</Text>
               <View style={styles.cardValueRow}>
-                <Text style={[styles.cardValue, { color: colors.muted }]}>{API_PRESETS[selectedPreset].name}</Text>
+                <Text style={[styles.cardValue, { color: colors.muted }]}>{API_PRESETS[activePresetIndex].name}</Text>
                 <IconSymbol name="chevron.right" size={16} color={colors.muted} />
               </View>
             </View>
@@ -478,9 +539,9 @@ export default function SettingsScreen() {
             </View>
             <TextInput
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={apiKey}
-              onChangeText={setApiKey}
-              placeholder="输入你的 API Key"
+              value={activeApiKey}
+              onChangeText={setActiveApiKey}
+              placeholder={activeModelScope === "text" ? "输入你的 API Key" : "留空则复用文本模型 API Key"}
               placeholderTextColor={colors.muted}
               secureTextEntry
               autoCapitalize="none"
@@ -494,8 +555,8 @@ export default function SettingsScreen() {
             </View>
             <TextInput
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={apiUrl}
-              onChangeText={setApiUrl}
+              value={activeApiUrl}
+              onChangeText={setActiveApiUrl}
               placeholder="完整请求地址，如 https://.../chat/completions"
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
@@ -512,8 +573,8 @@ export default function SettingsScreen() {
             </View>
             <TextInput
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={model}
-              onChangeText={setModel}
+              value={activeModel}
+              onChangeText={setActiveModel}
               placeholder="gpt-4o-mini"
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
@@ -527,59 +588,13 @@ export default function SettingsScreen() {
             </View>
             <TextInput
               style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={temperature}
-              onChangeText={setTemperature}
+              value={activeTemperature}
+              onChangeText={setActiveTemperature}
               placeholder="0.7"
               placeholderTextColor={colors.muted}
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="decimal-pad"
-            />
-          </View>
-
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-            <View style={styles.inputRow}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>评估模型 API Key（可选）</Text>
-            </View>
-            <TextInput
-              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={evalApiKey}
-              onChangeText={setEvalApiKey}
-              placeholder="留空则复用主 API Key"
-              placeholderTextColor={colors.muted}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-            <View style={styles.inputRow}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>评估模型 API URL</Text>
-            </View>
-            <TextInput
-              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={evalApiUrl}
-              onChangeText={setEvalApiUrl}
-              placeholder="完整请求地址，如 https://.../chat/completions"
-              placeholderTextColor={colors.muted}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-
-          <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-            <View style={styles.inputRow}>
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>评估模型名称</Text>
-            </View>
-            <TextInput
-              style={[styles.input, { color: colors.foreground, backgroundColor: colors.background }]}
-              value={evalModel}
-              onChangeText={setEvalModel}
-              placeholder="gpt-4o-mini"
-              placeholderTextColor={colors.muted}
-              autoCapitalize="none"
-              autoCorrect={false}
             />
           </View>
 
@@ -825,14 +840,14 @@ export default function SettingsScreen() {
           activeOpacity={1}
           onPress={() => setShowPresetModal(false)}
         >
-          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.modalTitle, { color: colors.foreground }]}>选择 API 预设</Text>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}> 
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>选择{activeModelScope === "text" ? "文本模型" : "评估模型"} API 预设</Text>
             {API_PRESETS.map((preset, index) => (
               <TouchableOpacity
                 key={preset.name}
                 style={[
                   styles.presetItem,
-                  selectedPreset === index && { backgroundColor: `${colors.primary}20` },
+                  activePresetIndex === index && { backgroundColor: `${colors.primary}20` },
                 ]}
                 onPress={() => handleSelectPreset(index)}
               >
@@ -840,12 +855,12 @@ export default function SettingsScreen() {
                   style={[
                     styles.presetName,
                     { color: colors.foreground },
-                    selectedPreset === index && { color: colors.primary },
+                    activePresetIndex === index && { color: colors.primary },
                   ]}
                 >
                   {preset.name}
                 </Text>
-                {selectedPreset === index ? (
+                {activePresetIndex === index ? (
                   <IconSymbol name="checkmark" size={20} color={colors.primary} />
                 ) : null}
               </TouchableOpacity>
@@ -1003,6 +1018,20 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 28,
+  },
+  scopeTabs: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 4,
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 12,
+  },
+  scopeTabItem: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   sectionTitle: {
     fontSize: 13,

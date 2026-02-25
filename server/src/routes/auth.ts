@@ -41,7 +41,7 @@ export async function authRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Body: { email: string } }>(
+  app.post<{ Body: { email: string; purpose?: "register" | "reset" } }>(
     "/auth/send-email-code",
     {
       config: authRateLimitConfig,
@@ -52,17 +52,20 @@ export async function authRoutes(app: FastifyInstance) {
           required: ["email"],
           properties: {
             email: { type: "string", minLength: 3, maxLength: 254 },
+            purpose: { type: "string", enum: ["register", "reset"] },
           },
         },
       },
     },
     async (request) => {
-      const { email } = request.body;
-      return authService.sendEmailCode(email);
+      const { email, purpose } = request.body;
+      return authService.sendEmailCode(email, purpose ?? "register");
     },
   );
 
-  app.post<{ Body: { email: string; code: string; nickname?: string } }>(
+  app.post<{
+    Body: { email: string; password: string; code: string; nickname?: string };
+  }>(
     "/auth/register",
     {
       preHandler: [requireAuth],
@@ -71,9 +74,10 @@ export async function authRoutes(app: FastifyInstance) {
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["email", "code"],
+          required: ["email", "password", "code"],
           properties: {
             email: { type: "string", minLength: 3, maxLength: 254 },
+            password: { type: "string", minLength: 6, maxLength: 64 },
             code: { type: "string", minLength: 4, maxLength: 10 },
             nickname: { type: "string", minLength: 1, maxLength: 20 },
           },
@@ -81,17 +85,18 @@ export async function authRoutes(app: FastifyInstance) {
       },
     },
     async (request) => {
-      const { email, code, nickname } = request.body;
+      const { email, password, code, nickname } = request.body;
       return authService.registerWithEmailCode(
         request.user!.sub,
         email,
+        password,
         code,
         nickname,
       );
     },
   );
 
-  app.post<{ Body: { email: string; code: string } }>(
+  app.post<{ Body: { email: string; password: string } }>(
     "/auth/login",
     {
       config: authRateLimitConfig,
@@ -99,17 +104,40 @@ export async function authRoutes(app: FastifyInstance) {
         body: {
           type: "object",
           additionalProperties: false,
-          required: ["email", "code"],
+          required: ["email", "password"],
           properties: {
             email: { type: "string", minLength: 3, maxLength: 254 },
-            code: { type: "string", minLength: 4, maxLength: 10 },
+            password: { type: "string", minLength: 6, maxLength: 64 },
           },
         },
       },
     },
     async (request) => {
-      const { email, code } = request.body;
-      return authService.loginWithEmailCode(email, code);
+      const { email, password } = request.body;
+      return authService.loginWithEmailPassword(email, password);
+    },
+  );
+
+  app.post<{ Body: { email: string; code: string; newPassword: string } }>(
+    "/auth/reset-password",
+    {
+      config: authRateLimitConfig,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["email", "code", "newPassword"],
+          properties: {
+            email: { type: "string", minLength: 3, maxLength: 254 },
+            code: { type: "string", minLength: 4, maxLength: 10 },
+            newPassword: { type: "string", minLength: 6, maxLength: 64 },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const { email, code, newPassword } = request.body;
+      return authService.resetPasswordWithEmailCode(email, code, newPassword);
     },
   );
 

@@ -160,14 +160,95 @@ async function consumeEmailCode(email: string, code: string) {
   return normalizedEmail;
 }
 
-export async function sendEmailCode(email: string) {
+function validatePassword(password: string) {
+  const value = password.trim();
+  if (value.length < 6 || value.length > 64) {
+    throw badRequest("密码长度应为6-64个字符");
+  }
+  return value;
+}
+
+type EmailCodePurpose = "register" | "reset";
+
+async function consumeEmailCodeByPurpose(
+  email: string,
+  code: string,
+  purpose: EmailCodePurpose,
+) {
+  const normalizedEmail = validateEmail(email);
+  const latest = await db
+    .select()
+    .from(emailVerificationCodes)
+    .where(
+      and(
+        eq(emailVerificationCodes.email, normalizedEmail),
+        eq(emailVerificationCodes.purpose, purpose),
+        isNull(emailVerificationCodes.consumedAt),
+      ),
+    )
+    .orderBy(desc(emailVerificationCodes.createdAt))
+    .get();
+
+  if (!latest) {
+    throw unauthorized("验证码错误或已过期");
+  }
+
+  const now = Date.now();
+  const expiresAt = Date.parse(latest.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt < now) {
+    throw unauthorized("验证码错误或已过期");
+  }
+
+  if (latest.attempts >= config.emailCodeMaxAttempts) {
+    throw unauthorized("验证码输入次数过多，请重新获取");
+  }
+
+  const expectedHash = hashEmailCode(normalizedEmail, code.trim());
+  if (expectedHash !== latest.codeHash) {
+    await db
+      .update(emailVerificationCodes)
+      .set({ attempts: latest.attempts + 1 })
+      .where(eq(emailVerificationCodes.id, latest.id));
+    throw unauthorized("验证码错误或已过期");
+  }
+
+  await db
+    .update(emailVerificationCodes)
+    .set({ consumedAt: new Date().toISOString() })
+    .where(eq(emailVerificationCodes.id, latest.id));
+
+  return normalizedEmail;
+}
+
+export async function sendEmailCode(
+  email: string,
+  purpose: EmailCodePurpose = "register",
+) {
   const normalizedEmail = validateEmail(email);
   const now = Date.now();
+
+  const existingUser = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, normalizedEmail))
+    .get();
+
+  if (purpose === "register" && existingUser?.isBound) {
+    throw conflict("邮箱已注册");
+  }
+  if (purpose === "reset" && (!existingUser || !existingUser.isBound)) {
+    throw notFound("邮箱未注册");
+  }
 
   const latestCode = await db
     .select()
     .from(emailVerificationCodes)
-    .where(eq(emailVerificationCodes.email, normalizedEmail))
+    .where(
+      and(
+        eq(emailVerificationCodes.email, normalizedEmail),
+        eq(emailVerificationCodes.purpose, purpose),
+      ),
+    )
     .orderBy(desc(emailVerificationCodes.createdAt))
     .get();
 
@@ -209,6 +290,7 @@ export async function sendEmailCode(email: string) {
   await db.insert(emailVerificationCodes).values({
     email: normalizedEmail,
     codeHash: hashEmailCode(normalizedEmail, code),
+    purpose,
     expiresAt,
   });
 
@@ -284,10 +366,16 @@ export async function deviceLogin(deviceId: string) {
 export async function registerWithEmailCode(
   userUuid: string,
   email: string,
+  password: string,
   code: string,
   nickname?: string,
 ) {
-  const normalizedEmail = await consumeEmailCode(email, code);
+  const normalizedEmail = await consumeEmailCodeByPurpose(
+    email,
+    code,
+    "register",
+  );
+  const finalPassword = validatePassword(password);
   const user = await db
     .select()
     .from(users)
@@ -309,13 +397,15 @@ export async function registerWithEmailCode(
     throw conflict("邮箱已被占用");
   }
 
+  const passwordHash = await hashPassword(finalPassword);
+
   try {
     await db
       .update(users)
       .set({
         email: normalizedEmail,
         username: null,
-        passwordHash: null,
+        passwordHash,
         nickname: nickname || user.nickname,
         deviceId: null,
         isBound: true,
@@ -345,8 +435,9 @@ export async function registerWithEmailCode(
   return { accessToken, refreshToken, user: formatUser(updatedUser) };
 }
 
-export async function loginWithEmailCode(email: string, code: string) {
-  const normalizedEmail = await consumeEmailCode(email, code);
+export async function loginWithEmailPassword(email: string, password: string) {
+  const normalizedEmail = validateEmail(email);
+  const finalPassword = validatePassword(password);
   const user = await db
     .select()
     .from(users)
@@ -355,6 +446,15 @@ export async function loginWithEmailCode(email: string, code: string) {
 
   if (!user || !user.isBound) {
     throw unauthorized("邮箱未注册");
+  }
+
+  if (!user.passwordHash) {
+    throw unauthorized("该账号尚未设置密码");
+  }
+
+  const valid = await verifyPassword(finalPassword, user.passwordHash);
+  if (!valid) {
+    throw unauthorized("邮箱或密码错误");
   }
 
   await db
@@ -366,6 +466,35 @@ export async function loginWithEmailCode(email: string, code: string) {
   await saveRefreshToken(user.id, refreshToken);
 
   return { accessToken, refreshToken, user: formatUser(user) };
+}
+
+export async function resetPasswordWithEmailCode(
+  email: string,
+  code: string,
+  newPassword: string,
+) {
+  const normalizedEmail = await consumeEmailCodeByPurpose(email, code, "reset");
+  const finalPassword = validatePassword(newPassword);
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, normalizedEmail))
+    .get();
+
+  if (!user || !user.isBound) {
+    throw notFound("邮箱未注册");
+  }
+
+  const passwordHash = await hashPassword(finalPassword);
+  await db
+    .update(users)
+    .set({
+      passwordHash,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(users.id, user.id));
+
+  return { success: true };
 }
 
 export async function passwordLogin(username: string, password: string) {

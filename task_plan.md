@@ -105,3 +105,46 @@
 
 - `pnpm run build` (in `server/`) passed
 - `pnpm run check` passed
+
+## 2026-02-25 - AI配置切换 + 广场高量保护
+
+### Goal
+
+1. 将设置页 AI 文本模型与评估模型改为同构字段 + 点击切换配置。
+2. 为评估模型补齐独立温度配置，避免和文本模型共用一个温度。
+3. 为提示词/故事广场列表增加高数据量下更稳的游标分页能力（兼容现有分页）。
+
+### Phases
+
+| Phase | Task                                                   | Status    |
+| ----- | ------------------------------------------------------ | --------- |
+| 1     | 设置页与存储结构审计，确定同构字段改造方案             | completed |
+| 2     | 落地 AI 配置切换 UI 与评估模型温度配置                 | completed |
+| 3     | 落地广场 cursor 分页能力（后端+客户端类型）            | completed |
+| 4     | 回归验证（`pnpm run check` + `server/pnpm run build`） | completed |
+
+### Validation Result (2026-02-25)
+
+- `server/pnpm run build` passed
+- `pnpm run check` passed
+
+## 2026-02-25 - 广场分页 + 邮箱密码体系调整
+
+### Goal
+
+1. 广场页接入后端 cursor 分页能力，支持继续加载，降低大数据量压力。
+2. 邮箱账号流程改为“注册设密码 + 密码登录 + 忘记密码验证码重置”。
+
+### Phases
+
+| Phase | Task                                                                      | Status    |
+| ----- | ------------------------------------------------------------------------- | --------- |
+| 1     | 调整后端认证接口与服务（register/login/reset-password/send-code-purpose） | completed |
+| 2     | 调整客户端登录页与 auth-store/provider 调用                               | completed |
+| 3     | 接入广场页加载更多（cursor）                                              | completed |
+| 4     | 回归验证（`server/pnpm run build` + `pnpm run check`）                    | completed |
+
+### Validation Result (2026-02-25)
+
+- `server/pnpm run build` passed
+- `pnpm run check` passed

@@ -43,6 +43,7 @@ const promptListQuerySchema = {
   properties: {
     page: { type: "string", pattern: "^[1-9]\\d*$" },
     limit: { type: "string", pattern: "^[1-9]\\d*$" },
+    cursor: { type: "string", minLength: 8, maxLength: 256 },
     sort: { type: "string", enum: ["newest", "popular", "downloads"] },
     search: { type: "string", minLength: 1, maxLength: 100 },
     tags: { type: "string", minLength: 1, maxLength: 500 },
@@ -71,6 +72,7 @@ export async function promptRoutes(app: FastifyInstance) {
     Querystring: {
       page?: string;
       limit?: string;
+      cursor?: string;
       sort?: string;
       search?: string;
       tags?: string;
@@ -91,10 +93,11 @@ export async function promptRoutes(app: FastifyInstance) {
         }
       }
 
-      const { page, limit, sort, search, tags } = request.query;
+      const { page, limit, cursor, sort, search, tags } = request.query;
       return promptService.list({
         page: parsePositiveInt(page, 1),
         limit: Math.min(parsePositiveInt(limit, 20), 50),
+        cursor: cursor || undefined,
         sort: (sort as "newest" | "popular" | "downloads") || "newest",
         search: search || undefined,
         tags: tags ? tags.split(",") : undefined,

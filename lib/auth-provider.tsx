@@ -6,6 +6,7 @@ import {
   sendEmailCode,
   registerBoundAccount,
   loginAccount,
+  resetPassword,
   logoutAccount,
   updateProfile,
 } from "@/lib/auth-store";
@@ -16,13 +17,19 @@ type AuthContextValue = {
   loading: boolean;
   user: ApiUser | null;
   isBound: boolean;
-  sendCode: (email: string) => Promise<void>;
+  sendCode: (email: string, purpose?: "register" | "reset") => Promise<void>;
   register: (
     email: string,
+    password: string,
     code: string,
     nickname?: string,
   ) => Promise<ApiUser>;
-  login: (email: string, code: string) => Promise<ApiUser>;
+  login: (email: string, password: string) => Promise<ApiUser>;
+  resetPassword: (
+    email: string,
+    code: string,
+    newPassword: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   saveProfile: (data: {
     nickname?: string;
@@ -50,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sendCode: sendEmailCode,
       register: registerBoundAccount,
       login: loginAccount,
+      resetPassword,
       logout: logoutAccount,
       saveProfile: updateProfile,
     }),

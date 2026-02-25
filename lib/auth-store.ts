@@ -242,10 +242,14 @@ export async function initAuth() {
   }
 }
 
-export async function sendEmailCode(email: string) {
+export async function sendEmailCode(
+  email: string,
+  purpose: "register" | "reset" = "register",
+) {
   try {
     await rawApiClient.post<{ success: boolean }>("/auth/send-email-code", {
       email,
+      purpose,
     });
   } catch (error) {
     throw new Error(parseApiError(error, "Send code failed"));
@@ -254,6 +258,7 @@ export async function sendEmailCode(email: string) {
 
 export async function registerBoundAccount(
   email: string,
+  password: string,
   code: string,
   nickname?: string,
 ) {
@@ -264,7 +269,7 @@ export async function registerBoundAccount(
   try {
     const response = await rawApiClient.post<AuthResult>(
       "/auth/register",
-      { email, code, nickname },
+      { email, password, code, nickname },
       { headers: { Authorization: `Bearer ${state.accessToken}` } },
     );
     await applyAuthResult(response.data);
@@ -274,16 +279,32 @@ export async function registerBoundAccount(
   }
 }
 
-export async function loginAccount(email: string, code: string) {
+export async function loginAccount(email: string, password: string) {
   try {
     const response = await rawApiClient.post<AuthResult>("/auth/login", {
       email,
-      code,
+      password,
     });
     await applyAuthResult(response.data);
     return response.data.user;
   } catch (error) {
     throw new Error(parseApiError(error, "Login failed"));
+  }
+}
+
+export async function resetPassword(
+  email: string,
+  code: string,
+  newPassword: string,
+) {
+  try {
+    await rawApiClient.post<{ success: boolean }>("/auth/reset-password", {
+      email,
+      code,
+      newPassword,
+    });
+  } catch (error) {
+    throw new Error(parseApiError(error, "Reset password failed"));
   }
 }
 

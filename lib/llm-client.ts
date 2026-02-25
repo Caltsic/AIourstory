@@ -610,6 +610,7 @@ export async function saveLLMConfig(config: {
   evalApiKey?: string;
   evalApiUrl?: string;
   evalModel?: string;
+  evalTemperature?: number;
   autoBackgroundEveryChoices?: number;
 }): Promise<void> {
   await saveStorageConfig(config);
@@ -690,29 +691,33 @@ export async function generateStory(
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      signal: options.signal,
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "system",
+            content: prompts.STORY_SYSTEM_PROMPT,
+          },
+          {
+            role: "user",
+            content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ""}${params.protagonistAppearance ? `，主角外貌：${params.protagonistAppearance}` : ""}。\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请生成剧情片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
+          },
+        ],
+        temperature,
+        max_tokens: 4000,
+      }),
     },
-    signal: options.signal,
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        {
-          role: "system",
-          content: prompts.STORY_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: `创建一个${params.genre}类型的故事，标题是"${params.title}"，前提是"${params.premise}"。玩家主角姓名：${params.protagonistName}${params.protagonistDescription ? `，主角简介：${params.protagonistDescription}` : ""}${params.protagonistAppearance ? `，主角外貌：${params.protagonistAppearance}` : ""}。\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请生成剧情片段，每个片段包含类型、角色（对话时）、文本和选项（最后一个片段）。`,
-        },
-      ],
-      temperature,
-      max_tokens: 4000,
-    }),
-  }, options.timeoutMs ?? null);
+    options.timeoutMs ?? null,
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -1144,26 +1149,30 @@ export async function evaluateCustomAction(
   const url = config.apiUrl.includes("/chat/completions")
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
-  const response = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      signal: options.signal,
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: "system", content: prompts.EVALUATE_ACTION_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n该行动为玩家主动输入的自定义行动，必须给出 1-8 的判定值，不允许输出 null。只输出数字，不要解释。`,
+          },
+        ],
+        temperature,
+        max_tokens: 10,
+      }),
     },
-    signal: options.signal,
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: "system", content: prompts.EVALUATE_ACTION_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `${buildDifficultyContext(difficulty)}\n\n${protagonistName ? `主角：${protagonistName}${protagonistDescription ? `（${protagonistDescription}）` : ""}` : ""}\n\n最近剧情：\n${history.slice(-500)}\n\n玩家自定义行动："${action}"\n\n该行动为玩家主动输入的自定义行动，必须给出 1-8 的判定值，不允许输出 null。只输出数字，不要解释。`,
-        },
-      ],
-      temperature,
-      max_tokens: 10,
-    }),
-  }, options.timeoutMs);
+    options.timeoutMs,
+  );
 
   const fallbackByDifficulty: Record<DifficultyLevel, number> = {
     简单: 3,
@@ -1332,7 +1341,10 @@ export async function evaluateContinuationQuality(params: {
   if (!evalApiKey || !evalApiUrl || !evalModel) return null;
 
   const prompts = await getActivePrompts();
-  const temperature = resolveConfiguredTemperature(config);
+  const evalTemp = Number(config.evalTemperature);
+  const temperature = Number.isNaN(evalTemp)
+    ? resolveConfiguredTemperature(config)
+    : Math.max(0, Math.min(2, evalTemp));
   const url = evalApiUrl.includes("/chat/completions")
     ? evalApiUrl
     : `${evalApiUrl}/chat/completions`;

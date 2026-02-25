@@ -162,3 +162,34 @@
   - `app/login.tsx` 增加发送验证码与倒计时
   - `lib/auth-store.ts` / `lib/auth-provider.tsx` API 参数改为 `email + code`
   - 资料与设置页展示邮箱字段。
+
+## 2026-02-25 (AI配置切换 + 广场高量保护)
+
+- 当前设置页中“文本模型”和“评估模型”字段不对称：文本模型有预设/APIKey/API URL/模型/温度，评估模型缺少预设与温度，用户体验不一致。
+- `lib/storage.ts` 当前仅有全局 `temperature`，评估模型调用 `evaluateContinuationQuality` 会复用该值，无法单独控制。
+- 广场列表接口目前是 offset 分页，虽然已有 `limit<=50` 防护，但当数据规模增长时深分页会变慢。
+- 改造策略：
+  - 设置页改为 `文本模型 | 评估模型` 切换面板，共用同一组字段 UI。
+  - 新增 `evalTemperature` 存储与调用路径。
+  - `stories/prompts` 列表新增可选 `cursor` 参数（针对 newest 排序），保持向后兼容 page/limit。
+
+## 2026-02-25 (AI配置切换 + 广场高量保护 - 实施结果)
+
+- `app/(tabs)/settings.tsx` 已改为 `文本模型 | 评估模型` 切换式配置；两侧统一支持：预设、API Key、API URL、模型、温度。
+- `lib/storage.ts` 已新增 `evalTemperature` 持久化键，评估模型温度可独立保存。
+- `lib/llm-client.ts` 的 `evaluateContinuationQuality(...)` 已优先使用 `evalTemperature`，不再强制复用文本模型温度。
+- 广场列表已新增可选 cursor 分页能力：
+  - 路由：`/prompts`、`/stories` 支持 `cursor`
+  - 服务：`prompt.service.ts`、`story.service.ts` 在 `newest` 排序下支持 keyset 查询并返回 `nextCursor`
+- 客户端：`lib/plaza-api.ts` 与 `shared/api-types.ts` 已兼容 `nextCursor`
+
+## 2026-02-25 (邮箱密码体系调整 + 广场页接入)
+
+- 用户确认邮箱体系改为：注册时设置密码、登录走密码、仅重置密码走邮箱验证码。
+- 后端认证接口已对应调整：
+  - `/auth/send-email-code` 增加 `purpose`（`register|reset`）
+  - `/auth/register` 改为 `email+password+code`
+  - `/auth/login` 改为 `email+password`
+  - 新增 `/auth/reset-password`（`email+code+newPassword`）
+- 客户端登录页已重构为三流程：绑定（含验证码）、密码登录、忘记密码重置。
+- 广场页 `app/(tabs)/plaza.tsx` 已接入 cursor 分页并支持“加载更多”。

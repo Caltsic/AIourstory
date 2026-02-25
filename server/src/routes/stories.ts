@@ -55,6 +55,7 @@ const storyListQuerySchema = {
   properties: {
     page: { type: "string", pattern: "^[1-9]\\d*$" },
     limit: { type: "string", pattern: "^[1-9]\\d*$" },
+    cursor: { type: "string", minLength: 8, maxLength: 256 },
     sort: { type: "string", enum: ["newest", "popular", "downloads"] },
     search: { type: "string", minLength: 1, maxLength: 100 },
     genre: { type: "string", minLength: 1, maxLength: 50 },
@@ -98,6 +99,7 @@ export async function storyRoutes(app: FastifyInstance) {
     Querystring: {
       page?: string;
       limit?: string;
+      cursor?: string;
       sort?: string;
       search?: string;
       genre?: string;
@@ -108,10 +110,11 @@ export async function storyRoutes(app: FastifyInstance) {
     { schema: { querystring: storyListQuerySchema } },
     async (request) => {
       const currentUserId = await getOptionalUserId(request);
-      const { page, limit, sort, search, genre, tags } = request.query;
+      const { page, limit, cursor, sort, search, genre, tags } = request.query;
       return storyService.list({
         page: parsePositiveInt(page, 1),
         limit: Math.min(parsePositiveInt(limit, 20), 50),
+        cursor: cursor || undefined,
         sort: (sort as "newest" | "popular" | "downloads") || "newest",
         search: search || undefined,
         genre: genre || undefined,

@@ -30,11 +30,14 @@ export default function PlazaTabScreen() {
   const [sort, setSort] = useState<Sort>("newest");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [promptItems, setPromptItems] = useState<PromptPlazaItem[]>([]);
   const [storyItems, setStoryItems] = useState<StoryPlazaItem[]>([]);
+  const [promptNextCursor, setPromptNextCursor] = useState<string | null>(null);
+  const [storyNextCursor, setStoryNextCursor] = useState<string | null>(null);
 
   const visibleItems = useMemo(
     () => (tab === "prompts" ? promptItems : storyItems),
@@ -42,29 +45,47 @@ export default function PlazaTabScreen() {
   );
 
   const loadData = useCallback(
-    async (isRefresh = false) => {
+    async (isRefresh = false, append = false) => {
       try {
         setError(null);
-        if (isRefresh) setRefreshing(true);
-        else setLoading(true);
+        if (isRefresh) {
+          setRefreshing(true);
+        } else if (append) {
+          setLoadingMore(true);
+        } else {
+          setLoading(true);
+        }
 
         if (tab === "prompts") {
-          const result = await listPromptPlaza({ sort, search: search.trim() || undefined });
-          setPromptItems(result.items);
+          const result = await listPromptPlaza({
+            sort,
+            search: search.trim() || undefined,
+            cursor: append ? promptNextCursor || undefined : undefined,
+          });
+          setPromptItems((prev) => (append ? prev.concat(result.items) : result.items));
+          setPromptNextCursor(result.nextCursor || null);
         } else {
-          const result = await listStoryPlaza({ sort, search: search.trim() || undefined });
-          setStoryItems(result.items);
+          const result = await listStoryPlaza({
+            sort,
+            search: search.trim() || undefined,
+            cursor: append ? storyNextCursor || undefined : undefined,
+          });
+          setStoryItems((prev) => (append ? prev.concat(result.items) : result.items));
+          setStoryNextCursor(result.nextCursor || null);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Load plaza failed";
         setError(message);
       } finally {
         setLoading(false);
+        setLoadingMore(false);
         setRefreshing(false);
       }
     },
-    [tab, sort, search]
+    [tab, sort, search, promptNextCursor, storyNextCursor]
   );
+
+  const canLoadMore = tab === "prompts" ? Boolean(promptNextCursor) : Boolean(storyNextCursor);
 
   useEffect(() => {
     loadData();
@@ -203,6 +224,25 @@ export default function PlazaTabScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
+
+        {!loading && !error && visibleItems.length > 0 ? (
+          <TouchableOpacity
+            onPress={() => loadData(false, true)}
+            disabled={!canLoadMore || loadingMore}
+            style={[
+              styles.retryBtn,
+              {
+                borderColor: colors.border,
+                opacity: !canLoadMore || loadingMore ? 0.6 : 1,
+                alignSelf: "center",
+              },
+            ]}
+          >
+            <Text style={{ color: colors.foreground }}>
+              {!canLoadMore ? "已加载全部" : loadingMore ? "加载中..." : "加载更多"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </ScrollView>
     </ScreenContainer>
   );

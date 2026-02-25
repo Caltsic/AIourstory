@@ -1,5 +1,5 @@
 ﻿import { randomUUID } from "node:crypto";
-import { eq, and, like, desc, sql, or, inArray } from "drizzle-orm";
+import { eq, and, like, desc, sql, or, inArray, lt } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { storySettings, users, likes, downloads } from "../db/schema.js";
 import { badRequest, notFound, forbidden } from "../utils/errors.js";
@@ -7,11 +7,17 @@ import { badRequest, notFound, forbidden } from "../utils/errors.js";
 interface ListParams {
   page: number;
   limit: number;
+  cursor?: string;
   sort: "newest" | "popular" | "downloads";
   search?: string;
   genre?: string;
   tags?: string[];
   currentUserId?: number;
+}
+
+interface ListCursorPayload {
+  createdAt: string;
+  id: number;
 }
 
 async function getUserByUuid(uuid: string) {
@@ -27,9 +33,30 @@ function safeJsonArray(input: string): string[] {
   }
 }
 
+function encodeListCursor(item: { createdAt: string; id: number }): string {
+  return Buffer.from(
+    JSON.stringify({ createdAt: item.createdAt, id: item.id }),
+    "utf8",
+  ).toString("base64url");
+}
+
+function decodeListCursor(cursor?: string): ListCursorPayload | null {
+  if (!cursor) return null;
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as { createdAt?: string; id?: number };
+    if (!parsed.createdAt || !Number.isFinite(parsed.id)) return null;
+    return { createdAt: parsed.createdAt, id: Number(parsed.id) };
+  } catch {
+    return null;
+  }
+}
+
 export async function list(params: ListParams) {
-  const { page, limit, sort, search, genre, tags, currentUserId } = params;
+  const { page, limit, cursor, sort, search, genre, tags, currentUserId } =
+    params;
   const offset = (page - 1) * limit;
+  const cursorPayload = sort === "newest" ? decodeListCursor(cursor) : null;
 
   const whereList = [eq(storySettings.status, "approved")];
   if (search) {
@@ -49,15 +76,29 @@ export async function list(params: ListParams) {
     );
   }
 
-  const whereClause = whereList.length === 1 ? whereList[0] : and(...whereList);
-  const orderBy =
-    sort === "popular"
-      ? desc(storySettings.likeCount)
-      : sort === "downloads"
-        ? desc(storySettings.downloadCount)
-        : desc(storySettings.createdAt);
+  if (cursorPayload) {
+    whereList.push(
+      or(
+        lt(storySettings.createdAt, cursorPayload.createdAt),
+        and(
+          eq(storySettings.createdAt, cursorPayload.createdAt),
+          lt(storySettings.id, cursorPayload.id),
+        ),
+      )!,
+    );
+  }
 
-  const rows = await db
+  const whereClause = whereList.length === 1 ? whereList[0] : and(...whereList);
+  const orderByList =
+    sort === "popular"
+      ? [desc(storySettings.likeCount), desc(storySettings.id)]
+      : sort === "downloads"
+        ? [desc(storySettings.downloadCount), desc(storySettings.id)]
+        : [desc(storySettings.createdAt), desc(storySettings.id)];
+
+  const rowLimit = cursorPayload ? limit + 1 : limit;
+
+  const queriedRows = await db
     .select({
       id: storySettings.id,
       uuid: storySettings.uuid,
@@ -77,9 +118,12 @@ export async function list(params: ListParams) {
     .from(storySettings)
     .leftJoin(users, eq(users.id, storySettings.authorId))
     .where(whereClause)
-    .orderBy(orderBy)
-    .limit(limit)
-    .offset(offset);
+    .orderBy(...orderByList)
+    .limit(rowLimit)
+    .offset(cursorPayload ? 0 : offset);
+
+  const hasMoreByCursor = cursorPayload ? queriedRows.length > limit : false;
+  const rows = hasMoreByCursor ? queriedRows.slice(0, limit) : queriedRows;
 
   const countResult = await db
     .select({ count: sql<number>`count(*)` })
@@ -128,7 +172,17 @@ export async function list(params: ListParams) {
     },
   }));
 
-  return { items, total, page, limit };
+  const hasNextByPage =
+    !cursorPayload && sort === "newest" && rows.length === limit;
+  const nextCursor =
+    sort === "newest" && rows.length > 0 && (hasMoreByCursor || hasNextByPage)
+      ? encodeListCursor({
+          createdAt: rows[rows.length - 1].createdAt,
+          id: rows[rows.length - 1].id,
+        })
+      : undefined;
+
+  return { items, total, page, limit, nextCursor };
 }
 
 export async function getByUuid(uuid: string, currentUserId?: number) {
