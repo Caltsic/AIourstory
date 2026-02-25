@@ -25,12 +25,14 @@ export default function LoginScreen() {
   const [mode, setMode] = useState<"bind" | "login">("bind");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [nickname, setNickname] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [resetMode, setResetMode] = useState(false);
   const [resetCode, setResetCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [sendingCode, setSendingCode] = useState(false);
   const [cooldown, setCooldown] = useState(0);
 
@@ -46,12 +48,20 @@ export default function LoginScreen() {
       Alert.alert("提示", "邮箱和密码不能为空");
       return;
     }
+    if (password.trim().length < 6 || password.trim().length > 64) {
+      Alert.alert("提示", "密码长度需在 6 到 64 位之间");
+      return;
+    }
 
     setSubmitting(true);
     try {
       if (mode === "bind") {
         if (!resetCode.trim()) {
           Alert.alert("提示", "绑定账号需要邮箱验证码");
+          return;
+        }
+        if (password.trim() !== confirmPassword.trim()) {
+          Alert.alert("提示", "两次输入的密码不一致");
           return;
         }
         await auth.register(
@@ -115,6 +125,14 @@ export default function LoginScreen() {
       Alert.alert("提示", "邮箱、验证码、新密码不能为空");
       return;
     }
+    if (newPassword.trim() !== confirmNewPassword.trim()) {
+      Alert.alert("提示", "两次输入的新密码不一致");
+      return;
+    }
+    if (newPassword.trim().length < 6 || newPassword.trim().length > 64) {
+      Alert.alert("提示", "新密码长度需在 6 到 64 位之间");
+      return;
+    }
     setSubmitting(true);
     try {
       await auth.resetPassword(
@@ -126,6 +144,8 @@ export default function LoginScreen() {
       setResetMode(false);
       setMode("login");
       setPassword(newPassword.trim());
+      setConfirmPassword(newPassword.trim());
+      setConfirmNewPassword("");
     } catch (err) {
       Alert.alert("失败", err instanceof Error ? err.message : "请稍后重试");
     } finally {
@@ -223,6 +243,26 @@ export default function LoginScreen() {
               autoCapitalize="none"
               autoCorrect={false}
             />
+
+            {mode === "bind" ? (
+              <TextInput
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="确认密码"
+                placeholderTextColor={colors.muted}
+                style={[
+                  styles.input,
+                  {
+                    color: colors.foreground,
+                    borderColor: colors.border,
+                    backgroundColor: colors.surface,
+                  },
+                ]}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            ) : null}
 
             {mode === "bind" ? (
               <>
@@ -383,6 +423,23 @@ export default function LoginScreen() {
               value={newPassword}
               onChangeText={setNewPassword}
               placeholder="新密码（6-64位）"
+              placeholderTextColor={colors.muted}
+              style={[
+                styles.input,
+                {
+                  color: colors.foreground,
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                },
+              ]}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TextInput
+              value={confirmNewPassword}
+              onChangeText={setConfirmNewPassword}
+              placeholder="确认新密码"
               placeholderTextColor={colors.muted}
               style={[
                 styles.input,

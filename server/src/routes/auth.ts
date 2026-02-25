@@ -77,7 +77,7 @@ export async function authRoutes(app: FastifyInstance) {
           required: ["email", "password", "code"],
           properties: {
             email: { type: "string", minLength: 3, maxLength: 254 },
-            password: { type: "string", minLength: 6, maxLength: 64 },
+            password: { type: "string", minLength: 1, maxLength: 128 },
             code: { type: "string", minLength: 4, maxLength: 10 },
             nickname: { type: "string", minLength: 1, maxLength: 20 },
           },
@@ -107,7 +107,7 @@ export async function authRoutes(app: FastifyInstance) {
           required: ["email", "password"],
           properties: {
             email: { type: "string", minLength: 3, maxLength: 254 },
-            password: { type: "string", minLength: 6, maxLength: 64 },
+            password: { type: "string", minLength: 1, maxLength: 128 },
           },
         },
       },
@@ -130,7 +130,7 @@ export async function authRoutes(app: FastifyInstance) {
           properties: {
             email: { type: "string", minLength: 3, maxLength: 254 },
             code: { type: "string", minLength: 4, maxLength: 10 },
-            newPassword: { type: "string", minLength: 6, maxLength: 64 },
+            newPassword: { type: "string", minLength: 1, maxLength: 128 },
           },
         },
       },
