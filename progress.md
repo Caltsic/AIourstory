@@ -135,3 +135,23 @@
   - 人物头像长按触发人物缩放模式；人物图显示应用缩放百分比。
 - `lib/story-store.ts` 变更：新增 `characterScalePercent` 并在迁移/新建存档设置默认值。
 - 验证：`pnpm run check` passed。
+
+## 2026-02-25 (restore generation UX/background concurrency) 
+
+- Used planning-with-files workflow for this new request.
+- Completed targeted audit across `app/game.tsx`, `app/create-story.tsx`, `app/(tabs)/index.tsx`, `lib/story-store.ts`, `lib/llm-client.ts`, plus historical notes in `BUG.md`/`plan.md`.
+- Identified core regression: state fields for cross-page generation status exist but are not consistently written during initial/continue generation, which breaks background/multi-story visibility.
+- Next: patch generation lifecycle status writes, add elapsed+cancel UI, remove request timeout interruption in story generation path, then run validation.
+
+## 2026-02-25 (restore generation UX/background concurrency) - Completed
+
+- Implemented generation lifecycle state writeback in `app/game.tsx` for both initial generation and continue generation.
+- Added `storyGenerationStartedAt` persistence/migration in `lib/story-store.ts`.
+- Added dialogue generation elapsed timer and cancel button.
+- Added global in-memory controller registry for per-story cancellation across screen transitions.
+- Updated loading flow to avoid duplicate initial generation when a story is already generating in background.
+- Added background sync polling while viewing a generating story.
+- Updated `lib/llm-client.ts` to accept request options (`signal`, `timeoutMs`) and removed default timeout for `generateStory`/`continueStory` calls.
+- Validation completed:
+  - `pnpm run check` passed
+  - `pnpm run test -- tests/story-store.test.ts` passed

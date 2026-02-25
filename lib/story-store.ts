@@ -112,6 +112,8 @@ export interface Story {
   imagePromptHistory: ImagePromptRecord[];
   /** Story generation status (cross-page UX) */
   storyGenerationStatus: "idle" | "generating" | "failed";
+  /** Timestamp when story generation entered generating */
+  storyGenerationStartedAt?: number;
   /** Last story generation error (keep only the latest) */
   lastStoryGenerationError: string;
   /** History of generated story summaries */
@@ -332,6 +334,10 @@ function migrateStory(story: Story): Story {
   if (!story.imageGenerationStatus) story.imageGenerationStatus = "idle";
   if (!story.imagePromptHistory) story.imagePromptHistory = [];
   if (!story.storyGenerationStatus) story.storyGenerationStatus = "idle";
+  if (!story.storyGenerationStartedAt) {
+    story.storyGenerationStartedAt =
+      story.storyGenerationStatus === "generating" ? story.updatedAt : 0;
+  }
   if (!story.lastStoryGenerationError) story.lastStoryGenerationError = "";
   if (!story.summaryHistory) story.summaryHistory = [];
   if (!story.currentPacing) story.currentPacing = "轻松";
@@ -403,6 +409,7 @@ export async function createStory(
     imageGenerationStatus: "idle",
     imagePromptHistory: [],
     storyGenerationStatus: "idle",
+    storyGenerationStartedAt: 0,
     lastStoryGenerationError: "",
     summaryHistory: [],
     difficulty,

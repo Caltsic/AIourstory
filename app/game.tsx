@@ -72,6 +72,7 @@ const AUTO_READ_DELAY_MS: Record<(typeof AUTO_READ_SPEEDS)[number], number> = {
   4: 550,
 };
 const BG_SCALE_TRACK_HEIGHT = 160;
+const storyGenerationControllers = new Map<string, AbortController>();
 
 interface LastSentContextMetrics {
   fullChars: number;
@@ -195,6 +196,7 @@ export default function GameScreen() {
   const [story, setStory] = useState<Story | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [generationElapsedSeconds, setGenerationElapsedSeconds] = useState(0);
   const [showMenu, setShowMenu] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [customInput, setCustomInput] = useState("");
@@ -262,6 +264,10 @@ export default function GameScreen() {
   const [autoReadEnabled, setAutoReadEnabled] = useState(false);
   const [autoReadSpeedIndex, setAutoReadSpeedIndex] = useState(0);
   const isMountedRef = useRef(true);
+  const activeStoryIdRef = useRef<string>("");
+  const generationTokenRef = useRef(0);
+  const generationAbortRef = useRef<AbortController | null>(null);
+  const generationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const affinityToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -309,6 +315,8 @@ export default function GameScreen() {
   const currentMinCharsTarget = PACE_MIN_CHARS[currentPacing];
   const currentGeneratedChars = story?.lastGeneratedChars ?? 0;
   const autoReadSpeed = AUTO_READ_SPEEDS[autoReadSpeedIndex];
+  const storyGeneratingActive =
+    generating || story?.storyGenerationStatus === "generating";
   const imageQueuePendingCount =
     imageQueueSnapshot.backgroundPending.length +
     imageQueueSnapshot.portraitPending.length;
@@ -381,6 +389,58 @@ export default function GameScreen() {
     }
   }
 
+  function clearGenerationTimer() {
+    if (generationTimerRef.current) {
+      clearInterval(generationTimerRef.current);
+      generationTimerRef.current = null;
+    }
+  }
+
+  function isAbortError(error: unknown): boolean {
+    return error instanceof Error && error.name === "AbortError";
+  }
+
+  function canUpdateGenerationUI(storyIdValue: string, token: number): boolean {
+    return (
+      isMountedRef.current &&
+      generationTokenRef.current === token &&
+      activeStoryIdRef.current === storyIdValue
+    );
+  }
+
+  async function patchStoryGenerationState(
+    storyIdValue: string,
+    status: Story["storyGenerationStatus"],
+    errorMessage = "",
+  ) {
+    const latest = await mutateLatestStory(storyIdValue, (draft) => {
+      draft.storyGenerationStatus = status;
+      draft.storyGenerationStartedAt =
+        status === "generating"
+          ? draft.storyGenerationStartedAt || Date.now()
+          : 0;
+      draft.lastStoryGenerationError = errorMessage;
+    });
+    if (latest && isMountedRef.current && activeStoryIdRef.current === latest.id) {
+      setStory((prev) => (prev && prev.id === latest.id ? { ...latest } : prev));
+    }
+  }
+
+  function cancelStoryGeneration() {
+    const targetStoryId = activeStoryIdRef.current || story?.id;
+    const controller =
+      (targetStoryId
+        ? storyGenerationControllers.get(targetStoryId)
+        : null) ?? generationAbortRef.current;
+    if (!controller) {
+      if (targetStoryId) {
+        void patchStoryGenerationState(targetStoryId, "idle", "");
+      }
+      return;
+    }
+    controller.abort();
+  }
+
   async function mutateLatestStory(
     storyIdValue: string,
     updater: (draft: Story) => void,
@@ -393,12 +453,47 @@ export default function GameScreen() {
   }
 
   useEffect(() => {
+    activeStoryIdRef.current = storyId || "";
+    setGenerating(false);
+    setGenerationElapsedSeconds(0);
+    clearGenerationTimer();
+    generationAbortRef.current =
+      (storyId ? storyGenerationControllers.get(storyId) : null) ?? null;
+  }, [storyId]);
+
+  useEffect(() => {
+    clearGenerationTimer();
+    if (!storyGeneratingActive) {
+      setGenerationElapsedSeconds(0);
+      return;
+    }
+    const startedAt =
+      story?.storyGenerationStartedAt && story.storyGenerationStartedAt > 0
+        ? story.storyGenerationStartedAt
+        : Date.now();
+    setGenerationElapsedSeconds(
+      Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
+    );
+    generationTimerRef.current = setInterval(() => {
+      if (!isMountedRef.current) return;
+      setGenerationElapsedSeconds(
+        Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
+      );
+    }, 250);
+    return () => {
+      clearGenerationTimer();
+    };
+  }, [storyGeneratingActive, story?.storyGenerationStartedAt, story?.id]);
+
+  useEffect(() => {
     return () => {
       isMountedRef.current = false;
       clearAutoReadTimer();
       clearAffinityToastTimer();
       clearScalePanelTimer();
       clearDiceTimers();
+      clearGenerationTimer();
+      generationAbortRef.current = null;
     };
   }, []);
 
@@ -409,7 +504,7 @@ export default function GameScreen() {
       !story ||
       !currentSegment ||
       loading ||
-      generating ||
+      storyGeneratingActive ||
       showDiceModal ||
       showMenu ||
       showHistory ||
@@ -447,7 +542,7 @@ export default function GameScreen() {
     story,
     currentSegment,
     loading,
-    generating,
+    storyGeneratingActive,
     showDiceModal,
     showMenu,
     showHistory,
@@ -519,6 +614,37 @@ export default function GameScreen() {
   }, [story]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!story || generating) return;
+    if (story.storyGenerationStatus !== "generating") return;
+    const watchingStoryId = story.id;
+    const timer = setInterval(() => {
+      void (async () => {
+        const latest = await getStory(watchingStoryId);
+        if (!latest || !isMountedRef.current) return;
+        if (activeStoryIdRef.current !== watchingStoryId) return;
+        setStory((prev) => {
+          if (!prev || prev.id !== latest.id) return prev;
+          if (
+            prev.updatedAt === latest.updatedAt &&
+            prev.storyGenerationStatus === latest.storyGenerationStatus &&
+            prev.segments.length === latest.segments.length &&
+            prev.currentIndex === latest.currentIndex
+          ) {
+            return prev;
+          }
+          return latest;
+        });
+        if (latest.segments.length > 0) {
+          setViewIndex(
+            Math.max(0, Math.min(latest.currentIndex, latest.segments.length - 1)),
+          );
+        }
+      })();
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [story?.id, story?.storyGenerationStatus, story?.updatedAt, generating]);
+
+  useEffect(() => {
     if (!story) return;
     const value = story.backgroundScalePercent ?? 100;
     if (value !== backgroundScalePercent) {
@@ -548,6 +674,10 @@ export default function GameScreen() {
     setBackgroundScalePercent(s.backgroundScalePercent ?? 100);
     setCharacterScalePercent(s.characterScalePercent ?? 100);
     if (s.segments.length === 0) {
+      if (s.storyGenerationStatus === "generating") {
+        setLoading(false);
+        return;
+      }
       // Check API config before generating
       const config = await getLLMConfig();
       if (!config.apiKey) {
@@ -563,7 +693,7 @@ export default function GameScreen() {
         return;
       }
       // Generate initial story
-      generateInitial(s);
+      void generateInitial(s);
     } else {
       setViewIndex(s.currentIndex);
     }
@@ -571,72 +701,103 @@ export default function GameScreen() {
   }
 
   async function generateInitial(s: Story) {
+    const targetStoryId = s.id;
+    const token = generationTokenRef.current + 1;
+    generationTokenRef.current = token;
+    const abortController = new AbortController();
+    storyGenerationControllers.set(targetStoryId, abortController);
+    generationAbortRef.current = abortController;
     setGenerating(true);
+    await patchStoryGenerationState(targetStoryId, "generating", "");
     try {
-      const result = await generateStory({
-        title: s.title,
-        premise: s.premise,
-        genre: s.genre,
-        protagonistName: s.protagonistName ?? "",
-        protagonistDescription: s.protagonistDescription ?? "",
-        protagonistAppearance: s.protagonistAppearance ?? "",
-        difficulty: s.difficulty,
-        pacing: s.currentPacing,
-        characterCards: s.characterCards,
-      });
-      if (result.segments && result.segments.length > 0) {
-        const initialSegments = ensureChoiceSegment(
-          result.segments as StorySegment[],
-        );
-        s.segments = initialSegments;
-        s.currentPacing = result.pacing;
-        s.lastGeneratedChars = result.generatedChars;
-        s.latestGeneratedContext =
-          buildImageContextFromSegments(initialSegments);
-        const openingImageContext = [
-          `故事开场：${s.premise}`,
-          buildImageContextFromSegments(initialSegments.slice(0, 6)),
-        ]
-          .filter(Boolean)
-          .join("\n")
-          .trim();
-        s.currentIndex = 0;
-        const newCharacterCardIds = processNewCharacters(
-          s,
-          result.newCharacters,
-        );
-        await applyAIInitialAffinityForNewCharacters(s, result.newCharacters);
-        applyAutoRevealByStableRealName(s);
-        try {
-          const fullHistoryText = buildFullHistoryContext(s.segments);
-          const summaryResult = await summarizeStory({
-            history: fullHistoryText,
-            recentTitles: getRecentSummaryTitles(s),
-          });
-          if (summaryResult.summary) {
-            s.storySummary = summaryResult.summary.trim();
-            addSummaryRecord(s, summaryResult, fullHistoryText.length);
-          }
-        } catch (summaryErr) {
-          console.warn("Initial summary generation failed:", summaryErr);
+      const result = await generateStory(
+        {
+          title: s.title,
+          premise: s.premise,
+          genre: s.genre,
+          protagonistName: s.protagonistName ?? "",
+          protagonistDescription: s.protagonistDescription ?? "",
+          protagonistAppearance: s.protagonistAppearance ?? "",
+          difficulty: s.difficulty,
+          pacing: s.currentPacing,
+          characterCards: s.characterCards,
+        },
+        { signal: abortController.signal, timeoutMs: null },
+      );
+      if (!result.segments || result.segments.length === 0) {
+        throw new Error("No valid story segments were returned. Please retry.");
+      }
+      const initialSegments = ensureChoiceSegment(
+        result.segments as StorySegment[],
+      );
+      s.segments = initialSegments;
+      s.currentPacing = result.pacing;
+      s.lastGeneratedChars = result.generatedChars;
+      s.latestGeneratedContext = buildImageContextFromSegments(initialSegments);
+      const openingImageContext = [
+        `故事开场：${s.premise}`,
+        buildImageContextFromSegments(initialSegments.slice(0, 6)),
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      s.currentIndex = 0;
+      const newCharacterCardIds = processNewCharacters(s, result.newCharacters);
+      await applyAIInitialAffinityForNewCharacters(s, result.newCharacters);
+      applyAutoRevealByStableRealName(s);
+      try {
+        const fullHistoryText = buildFullHistoryContext(s.segments);
+        const summaryResult = await summarizeStory({
+          history: fullHistoryText,
+          recentTitles: getRecentSummaryTitles(s),
+        });
+        if (summaryResult.summary) {
+          s.storySummary = summaryResult.summary.trim();
+          addSummaryRecord(s, summaryResult, fullHistoryText.length);
         }
-        await updateStory(s);
+      } catch (summaryErr) {
+        console.warn("Initial summary generation failed:", summaryErr);
+      }
+      s.storyGenerationStatus = "idle";
+      s.storyGenerationStartedAt = 0;
+      s.lastStoryGenerationError = "";
+      await updateStory(s);
+      if (canUpdateGenerationUI(targetStoryId, token)) {
         setStory({ ...s });
         setViewIndex(0);
-        if (openingImageContext) {
-          enqueueAutoBackgroundGeneration(
-            s.id,
-            openingImageContext,
-            "initial-opening",
-          );
-        }
-        enqueueAutoPortraitGeneration(s.id, newCharacterCardIds);
       }
+      if (openingImageContext) {
+        enqueueAutoBackgroundGeneration(
+          s.id,
+          openingImageContext,
+          "initial-opening",
+        );
+      }
+      enqueueAutoPortraitGeneration(s.id, newCharacterCardIds);
     } catch (err) {
-      console.error("Generate failed:", err);
-      Alert.alert("生成失败", err instanceof Error ? err.message : "未知错误");
+      const cancelled = isAbortError(err);
+      if (!cancelled) {
+        console.error("Generate failed:", err);
+      }
+      const message = err instanceof Error ? err.message : "Unknown error";
+      await patchStoryGenerationState(
+        targetStoryId,
+        cancelled ? "idle" : "failed",
+        cancelled ? "" : message,
+      );
+      if (!cancelled && canUpdateGenerationUI(targetStoryId, token)) {
+        Alert.alert("生成失败", message);
+      }
     } finally {
-      setGenerating(false);
+      if (generationAbortRef.current === abortController) {
+        generationAbortRef.current = null;
+      }
+      if (storyGenerationControllers.get(targetStoryId) === abortController) {
+        storyGenerationControllers.delete(targetStoryId);
+      }
+      if (generationTokenRef.current === token && isMountedRef.current) {
+        setGenerating(false);
+      }
     }
   }
 
@@ -1749,7 +1910,7 @@ export default function GameScreen() {
       Alert.alert("请稍候", "已有背景生图任务在进行中");
       return;
     }
-    if (generating) {
+    if (storyGeneratingActive) {
       Alert.alert("请稍候", "剧情生成进行中，请等待完成后再生图");
       return;
     }
@@ -2088,7 +2249,7 @@ export default function GameScreen() {
 
   // Handle player choice — with dice mechanics
   async function handleChoice(choiceText: string, choiceIndex?: number) {
-    if (!story || generating) return;
+    if (!story || storyGeneratingActive) return;
     if (imageGenerating) {
       Alert.alert("请稍候", "生图进行中，请等待完成后再继续剧情");
       return;
@@ -2114,7 +2275,6 @@ export default function GameScreen() {
     } else {
       // Custom action — always request a concrete judgment value
       try {
-        setGenerating(true);
         judgmentValue = await evaluateCustomAction(
           choiceText,
           story.historyContext,
@@ -2123,10 +2283,9 @@ export default function GameScreen() {
           story.protagonistDescription,
         );
         judgmentValue = getAffinityAdjustedJudgment(judgmentValue, choiceText);
-      } catch {
+      } catch (error) {
+        if (isAbortError(error)) return;
         judgmentValue = 4;
-      } finally {
-        setGenerating(false);
       }
     }
 
@@ -2183,6 +2342,12 @@ export default function GameScreen() {
         segments: [...story.segments],
         characterCards: story.characterCards.map((card) => ({ ...card })),
       } as Story);
+    const targetStoryId = workingStory.id;
+    const token = generationTokenRef.current + 1;
+    generationTokenRef.current = token;
+    const abortController = new AbortController();
+    storyGenerationControllers.set(targetStoryId, abortController);
+    generationAbortRef.current = abortController;
     const historyBeforeChoice = workingStory.historyContext;
 
     // Add a narration segment for the choice made
@@ -2205,6 +2370,14 @@ export default function GameScreen() {
     const preContinueSummaryTask = createSummaryCompressionTask(workingStory);
 
     setGenerating(true);
+    workingStory.storyGenerationStatus = "generating";
+    workingStory.storyGenerationStartedAt =
+      workingStory.storyGenerationStartedAt || Date.now();
+    workingStory.lastStoryGenerationError = "";
+    await updateStory(workingStory);
+    if (canUpdateGenerationUI(targetStoryId, token)) {
+      setStory({ ...workingStory });
+    }
     const requestStartedAt = Date.now();
     try {
       const diceOutcomeCtx = dice
@@ -2224,21 +2397,24 @@ export default function GameScreen() {
         at: requestStartedAt,
       });
 
-      const result = await continueStory({
-        title: workingStory.title,
-        genre: workingStory.genre,
-        premise: workingStory.premise,
-        history: latestHistoryContext,
-        choiceText,
-        protagonistName: workingStory.protagonistName ?? "",
-        protagonistDescription: workingStory.protagonistDescription ?? "",
-        protagonistAppearance: workingStory.protagonistAppearance ?? "",
-        difficulty: workingStory.difficulty,
-        pacing: workingStory.currentPacing,
-        characterCards: workingStory.characterCards,
-        continuationFeedback: getRecentContinuationFeedback(workingStory),
-        diceOutcomeContext: diceOutcomeCtx,
-      });
+      const result = await continueStory(
+        {
+          title: workingStory.title,
+          genre: workingStory.genre,
+          premise: workingStory.premise,
+          history: latestHistoryContext,
+          choiceText,
+          protagonistName: workingStory.protagonistName ?? "",
+          protagonistDescription: workingStory.protagonistDescription ?? "",
+          protagonistAppearance: workingStory.protagonistAppearance ?? "",
+          difficulty: workingStory.difficulty,
+          pacing: workingStory.currentPacing,
+          characterCards: workingStory.characterCards,
+          continuationFeedback: getRecentContinuationFeedback(workingStory),
+          diceOutcomeContext: diceOutcomeCtx,
+        },
+        { signal: abortController.signal, timeoutMs: null },
+      );
 
       const generatedSegments = Array.isArray(result.segments)
         ? (result.segments as StorySegment[])
@@ -2265,15 +2441,20 @@ export default function GameScreen() {
 
       // Increment choice counter
       workingStory.choiceCount = (workingStory.choiceCount ?? 0) + 1;
+      workingStory.storyGenerationStatus = "idle";
+      workingStory.storyGenerationStartedAt = 0;
+      workingStory.lastStoryGenerationError = "";
 
       await updateStory(workingStory);
-      if (workingStory.historyContext === historyBeforeChoice) {
-        setHistoryStuckCount((count) => count + 1);
-      } else {
-        setHistoryStuckCount(0);
+      if (canUpdateGenerationUI(targetStoryId, token)) {
+        if (workingStory.historyContext === historyBeforeChoice) {
+          setHistoryStuckCount((count) => count + 1);
+        } else {
+          setHistoryStuckCount(0);
+        }
+        setStory({ ...workingStory });
+        setViewIndex(newIndex);
       }
-      setStory({ ...workingStory });
-      setViewIndex(newIndex);
       enqueueAutoPortraitGeneration(workingStory.id, newCharacterCardIds);
       void triggerAutoBackgroundOnChoiceProgress(workingStory.id, choiceText);
       void (async () => {
@@ -2303,7 +2484,11 @@ export default function GameScreen() {
           ...(latest.continuationFeedbackHistory ?? []),
         ].slice(0, 20);
         await updateStory(latest);
-        if (isMountedRef.current) {
+        if (
+          isMountedRef.current &&
+          generationTokenRef.current === token &&
+          activeStoryIdRef.current === latest.id
+        ) {
           setStory((prev) => {
             if (!prev || prev.id !== latest.id) return prev;
             return {
@@ -2332,9 +2517,22 @@ export default function GameScreen() {
         }
       }
     } catch (err) {
-      console.error("Continue failed:", err);
-      Alert.alert("生成失败", err instanceof Error ? err.message : "未知错误");
+      const cancelled = isAbortError(err);
+      if (!cancelled) {
+        console.error("Continue failed:", err);
+      }
+      const message = err instanceof Error ? err.message : "Unknown error";
       workingStory.segments.pop();
+      workingStory.storyGenerationStatus = cancelled ? "idle" : "failed";
+      workingStory.storyGenerationStartedAt = 0;
+      workingStory.lastStoryGenerationError = cancelled ? "" : message;
+      await updateStory(workingStory);
+      if (canUpdateGenerationUI(targetStoryId, token)) {
+        setStory({ ...workingStory });
+        if (!cancelled) {
+          Alert.alert("生成失败", message);
+        }
+      }
     } finally {
       setLastSentContextMetrics((prev) =>
         prev.at === requestStartedAt
@@ -2347,7 +2545,15 @@ export default function GameScreen() {
             }
           : prev,
       );
-      setGenerating(false);
+      if (generationAbortRef.current === abortController) {
+        generationAbortRef.current = null;
+      }
+      if (storyGenerationControllers.get(targetStoryId) === abortController) {
+        storyGenerationControllers.delete(targetStoryId);
+      }
+      if (generationTokenRef.current === token && isMountedRef.current) {
+        setGenerating(false);
+      }
     }
   }
 
@@ -2512,7 +2718,7 @@ export default function GameScreen() {
                   },
                 ]}
                 activeOpacity={0.8}
-                disabled={imageGenerating || generating}
+                disabled={imageGenerating || storyGeneratingActive}
               >
                 {imageGenerating ? (
                   <ActivityIndicator
@@ -2625,12 +2831,31 @@ export default function GameScreen() {
               <Text style={styles.affinityToastText}>{affinityToastText}</Text>
             </View>
           ) : null}
-          {generating ? (
+          {storyGeneratingActive ? (
             <View style={styles.generatingContainer}>
-              <ActivityIndicator size="small" color={colors.primary} />
-              <Text style={[styles.generatingText, { color: colors.muted }]}>
-                剧情生成中...
-              </Text>
+              <View style={styles.generatingStatusRow}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={[styles.generatingText, { color: colors.muted }]}>
+                  {`剧情生成中... 已生成 ${generationElapsedSeconds} 秒`}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={cancelStoryGeneration}
+                style={[
+                  styles.generatingCancelButton,
+                  {
+                    borderColor: colors.primary + "90",
+                    backgroundColor: colors.surface + "66",
+                  },
+                ]}
+                activeOpacity={0.75}
+              >
+                <Text
+                  style={[styles.generatingCancelText, { color: colors.primary }]}
+                >
+                  取消生成
+                </Text>
+              </TouchableOpacity>
             </View>
           ) : currentSegment ? (
             <View style={styles.dialogueContent}>
@@ -4052,7 +4277,7 @@ export default function GameScreen() {
         currentMinCharsTarget={currentMinCharsTarget}
         currentGeneratedChars={currentGeneratedChars}
         lastSentMetrics={lastSentContextMetrics}
-        generating={generating}
+        generating={storyGeneratingActive}
         historyStuckCount={historyStuckCount}
         lastAffinityDebug={lastAffinityDebug}
       />
@@ -4332,6 +4557,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   generatingContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  generatingStatusRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -4339,6 +4569,16 @@ const styles = StyleSheet.create({
   },
   generatingText: {
     fontSize: 15,
+  },
+  generatingCancelButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  generatingCancelText: {
+    fontSize: 13,
+    fontWeight: "700",
   },
   dialogueContent: {
     gap: 8,

@@ -63,6 +63,11 @@ export interface SummarizeStoryParams {
   recentTitles?: string[];
 }
 
+export interface LLMRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number | null;
+}
+
 export interface RandomStoryConfig {
   title: string;
   genre: string;
@@ -271,7 +276,6 @@ function buildPacingStructureConstraint(requiredPacing: PaceLevel): string {
 }
 
 export const HISTORY_CONTEXT_CHARS_LIMIT = 8000;
-const CONTINUE_REQUEST_TIMEOUT_MS = 90_000;
 const LLM_REQUEST_TIMEOUT_MS = 90_000;
 const HIGH_UNCERTAINTY_ACTION_PATTERNS = [
   /尝试|试图/,
@@ -300,14 +304,34 @@ const HIGH_RISK_CONTEXT_PATTERNS = [
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
-  timeoutMs = LLM_REQUEST_TIMEOUT_MS,
+  timeoutMs: number | null = LLM_REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
+  const hasTimeout = typeof timeoutMs === "number" && timeoutMs > 0;
+  if (!hasTimeout) {
+    return fetch(input, init);
+  }
+
+  const externalSignal = init.signal;
   const controller = new AbortController();
+  let detachExternalAbort: (() => void) | null = null;
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      const forwardAbort = () => controller.abort();
+      externalSignal.addEventListener("abort", forwardAbort, { once: true });
+      detachExternalAbort = () =>
+        externalSignal.removeEventListener("abort", forwardAbort);
+    }
+  }
+
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const { signal: _ignoredSignal, ...restInit } = init;
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetch(input, { ...restInit, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+    if (detachExternalAbort) detachExternalAbort();
   }
 }
 
@@ -650,6 +674,7 @@ export async function testAPIKey(
  */
 export async function generateStory(
   params: GenerateStoryParams,
+  options: LLMRequestOptions = {},
 ): Promise<LLMResponse> {
   const config = await getLLMConfig();
 
@@ -671,6 +696,7 @@ export async function generateStory(
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
+    signal: options.signal,
     body: JSON.stringify({
       model: config.model,
       messages: [
@@ -686,7 +712,7 @@ export async function generateStory(
       temperature,
       max_tokens: 4000,
     }),
-  });
+  }, options.timeoutMs ?? null);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -704,6 +730,7 @@ export async function generateStory(
  */
 export async function continueStory(
   params: ContinueStoryParams,
+  options: LLMRequestOptions = {},
 ): Promise<LLMResponse> {
   const config = await getLLMConfig();
 
@@ -720,40 +747,33 @@ export async function continueStory(
     ? config.apiUrl
     : `${config.apiUrl}/chat/completions`;
 
-  let response: Response;
-  try {
-    response = await fetchWithTimeout(
-      url,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: config.model,
-          messages: [
-            {
-              role: "system",
-              content: prompts.CONTINUE_SYSTEM_PROMPT,
-            },
-            {
-              role: "user",
-              content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${params.history.trim()}\n\n${params.continuationFeedback?.length ? `[最近续写复盘建议]\n${params.continuationFeedback.join("\n")}` : ""}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
-            },
-          ],
-          temperature,
-          max_tokens: 4000,
-        }),
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
       },
-      CONTINUE_REQUEST_TIMEOUT_MS,
-    );
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("剧情生成超时，请重试（已自动保护长上下文）");
-    }
-    throw error;
-  }
+      signal: options.signal,
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "system",
+            content: prompts.CONTINUE_SYSTEM_PROMPT,
+          },
+          {
+            role: "user",
+            content: `故事标题：${params.title}\n类型：${params.genre}\n前提：${params.premise}\n玩家主角：${params.protagonistName}${params.protagonistDescription ? `（${params.protagonistDescription}）` : ""}${params.protagonistAppearance ? `，外貌：${params.protagonistAppearance}` : ""}\n\n${buildDifficultyContext(params.difficulty)}\n${buildCharacterCardsContext(params.characterCards ?? [])}\n\n前情提要与最近剧情：\n${params.history.trim()}\n\n${params.continuationFeedback?.length ? `[最近续写复盘建议]\n${params.continuationFeedback.join("\n")}` : ""}\n\n${params.diceOutcomeContext ? params.diceOutcomeContext + "\n\n" : ""}用户选择了：${params.choiceText}\n\n${buildPacingConstraint(requiredPacing)}\n${buildPacingStructureConstraint(requiredPacing)}\n\n请根据用户的选择继续生成新的故事片段，保持剧情连贯性。`,
+          },
+        ],
+        temperature,
+        max_tokens: 4000,
+      }),
+    },
+    options.timeoutMs ?? null,
+  );
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -1108,6 +1128,7 @@ export async function evaluateCustomAction(
   difficulty: DifficultyLevel,
   protagonistName?: string,
   protagonistDescription?: string,
+  options: LLMRequestOptions = {},
 ): Promise<number> {
   const config = await getLLMConfig();
 
@@ -1129,6 +1150,7 @@ export async function evaluateCustomAction(
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
+    signal: options.signal,
     body: JSON.stringify({
       model: config.model,
       messages: [
@@ -1141,7 +1163,7 @@ export async function evaluateCustomAction(
       temperature,
       max_tokens: 10,
     }),
-  });
+  }, options.timeoutMs);
 
   const fallbackByDifficulty: Record<DifficultyLevel, number> = {
     简单: 3,

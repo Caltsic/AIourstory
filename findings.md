@@ -105,3 +105,30 @@
 - 缩放浮层支持背景/人物双模式切换，2.5 秒自动淡出（无阻断式交互）。
 - 人物缩放入口增加在角色头像长按（对话头像与角色卡头像），满足快速直达调节。
 - 人物缩放已持久化到故事存档（`characterScalePercent`），与背景缩放策略一致。
+
+## 2026-02-25 (story generation regression audit)
+
+- Confirmed `storyGenerationStatus` and `lastStoryGenerationError` are still in `Story` type and home list UI, but runtime writes for these fields are mostly missing in `app/game.tsx` generation paths.
+- Confirmed `app/(tabs)/index.tsx` still renders generating/failed hints based on those fields, so current UX can appear broken/stale.
+- Confirmed `app/game.tsx` currently shows only spinner text during generation; no elapsed seconds and no cancel action.
+- Confirmed `lib/llm-client.ts` still enforces AbortController timeouts (default 90s; continue path 120s) that can interrupt long-generation models.
+- Confirmed docs (`BUG.md`, `plan.md`) describe previously implemented behavior for background-safe generation and multi-story state, indicating regression in current code.
+
+## 2026-02-25 (implemented restore)
+
+- `app/game.tsx` now writes `storyGenerationStatus` lifecycle in both initial generation and continue generation:
+  - start: `generating`
+  - success: `idle`
+  - failure: `failed` + `lastStoryGenerationError`
+  - user-cancel: `idle` without failure toast
+- Added persisted `storyGenerationStartedAt` support (`lib/story-store.ts` migration + create defaults), enabling elapsed-time display during background generation.
+- Added dialogue-area generation UX:
+  - elapsed seconds text (`剧情生成中... 已生成 N 秒`)
+  - `取消生成` button wired to AbortController cancellation
+- Introduced cross-screen controller registry (`storyGenerationControllers`) so background/in-flight generation for a story can still be canceled after navigation.
+- Restored background-safe behavior:
+  - entering a story with `storyGenerationStatus=generating` and empty segments no longer triggers duplicate initial generation.
+  - lightweight polling syncs current story state while background generation is in progress.
+- Removed forced timeout interruption for story generation requests in `lib/llm-client.ts`:
+  - `generateStory` and `continueStory` now support `AbortSignal` and default to no timeout (`timeoutMs ?? null`).
+  - cancellation remains user-driven via AbortController.
