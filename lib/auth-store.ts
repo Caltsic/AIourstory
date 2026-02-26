@@ -138,28 +138,7 @@ function isAxiosNetworkError(error: unknown) {
 }
 
 function buildApiBaseFallbacks(current: string) {
-  const candidates = new Set<string>([current]);
-
-  try {
-    const parsed = new URL(current);
-    if (parsed.protocol === "https:") {
-      const httpCandidate = new URL(current);
-      httpCandidate.protocol = "http:";
-      if (!httpCandidate.port) {
-        httpCandidate.port = "3000";
-      }
-      candidates.add(httpCandidate.toString().replace(/\/+$/, ""));
-    } else if (parsed.protocol === "http:" && !parsed.port) {
-      const withPort = new URL(current);
-      withPort.port = "3000";
-      candidates.add(withPort.toString().replace(/\/+$/, ""));
-    }
-  } catch {
-    // keep original candidate only
-  }
-
-  candidates.add("http://8.137.71.118:3000/v1");
-  return Array.from(candidates);
+  return [current];
 }
 
 export async function refreshAuthTokens() {

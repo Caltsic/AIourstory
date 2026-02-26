@@ -267,7 +267,9 @@ export default function GameScreen() {
   const activeStoryIdRef = useRef<string>("");
   const generationTokenRef = useRef(0);
   const generationAbortRef = useRef<AbortController | null>(null);
-  const generationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const generationTimerRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
   const autoReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const affinityToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -309,8 +311,8 @@ export default function GameScreen() {
     currentSegment.choices.length > 0;
   const currentFullHistoryChars = countSegmentChars(story?.segments ?? []);
   const currentHistoryChars = (story?.historyContext ?? "").trim().length;
-  const currentSentChars = currentFullHistoryChars;
-  const currentTruncated = false;
+  const currentSentChars = currentHistoryChars;
+  const currentTruncated = currentHistoryChars < currentFullHistoryChars;
   const currentPacing = story?.currentPacing ?? "轻松";
   const currentMinCharsTarget = PACE_MIN_CHARS[currentPacing];
   const currentGeneratedChars = story?.lastGeneratedChars ?? 0;
@@ -421,17 +423,22 @@ export default function GameScreen() {
           : 0;
       draft.lastStoryGenerationError = errorMessage;
     });
-    if (latest && isMountedRef.current && activeStoryIdRef.current === latest.id) {
-      setStory((prev) => (prev && prev.id === latest.id ? { ...latest } : prev));
+    if (
+      latest &&
+      isMountedRef.current &&
+      activeStoryIdRef.current === latest.id
+    ) {
+      setStory((prev) =>
+        prev && prev.id === latest.id ? { ...latest } : prev,
+      );
     }
   }
 
   function cancelStoryGeneration() {
     const targetStoryId = activeStoryIdRef.current || story?.id;
     const controller =
-      (targetStoryId
-        ? storyGenerationControllers.get(targetStoryId)
-        : null) ?? generationAbortRef.current;
+      (targetStoryId ? storyGenerationControllers.get(targetStoryId) : null) ??
+      generationAbortRef.current;
     if (!controller) {
       if (targetStoryId) {
         void patchStoryGenerationState(targetStoryId, "idle", "");
@@ -636,7 +643,10 @@ export default function GameScreen() {
         });
         if (latest.segments.length > 0) {
           setViewIndex(
-            Math.max(0, Math.min(latest.currentIndex, latest.segments.length - 1)),
+            Math.max(
+              0,
+              Math.min(latest.currentIndex, latest.segments.length - 1),
+            ),
           );
         }
       })();
@@ -2851,7 +2861,10 @@ export default function GameScreen() {
                 activeOpacity={0.75}
               >
                 <Text
-                  style={[styles.generatingCancelText, { color: colors.primary }]}
+                  style={[
+                    styles.generatingCancelText,
+                    { color: colors.primary },
+                  ]}
                 >
                   取消生成
                 </Text>

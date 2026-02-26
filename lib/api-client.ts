@@ -15,13 +15,12 @@ let authHooks: AuthHooks = {
 };
 
 const DEFAULT_API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://8.137.71.118:3000/v1";
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || "http://127.0.0.1:3000/v1";
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const ALLOW_INSECURE_HTTP =
   process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === "1" ||
   process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === "true";
-const INSECURE_HTTP_HOST_ALLOWLIST = new Set(["8.137.71.118"]);
 
 function isLocalHost(hostname: string) {
   return (
@@ -37,14 +36,9 @@ function ensureSecureApiBaseUrl(url: string) {
     throw new Error("Invalid API base URL");
   }
 
-  const isAllowlistedInsecureHost =
-    parsed.protocol === "http:" &&
-    INSECURE_HTTP_HOST_ALLOWLIST.has(parsed.hostname);
-
   if (
     IS_PRODUCTION &&
     !ALLOW_INSECURE_HTTP &&
-    !isAllowlistedInsecureHost &&
     parsed.protocol === "http:" &&
     !isLocalHost(parsed.hostname)
   ) {

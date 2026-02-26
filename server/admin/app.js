@@ -1,8 +1,5 @@
 const DEFAULT_BASE_URL = (() => {
-  const host = window.location.hostname || "8.137.71.118";
-  if (host === "8.137.71.118") return "http://8.137.71.118:3000/v1";
-  const port = window.location.port ? `:${window.location.port}` : "";
-  return `${window.location.protocol}//${host}${port}/v1`;
+  return `${window.location.origin}/v1`;
 })();
 const STORAGE_KEY = "aistory_admin_login_v2";
 const ALLOW_INSECURE_HTTP =
@@ -58,21 +55,7 @@ function normalizeBaseUrl(url) {
 }
 
 function migrateLegacyBaseUrl(url) {
-  const normalized = normalizeBaseUrl(url);
-  try {
-    const parsed = new URL(normalized);
-    if (
-      parsed.hostname === "8.137.71.118" &&
-      parsed.protocol === "https:" &&
-      parsed.port === "3000"
-    ) {
-      parsed.protocol = "http:";
-      return parsed.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    return normalized;
-  }
-  return normalized;
+  return normalizeBaseUrl(url);
 }
 
 function isLocalHost(hostname) {
