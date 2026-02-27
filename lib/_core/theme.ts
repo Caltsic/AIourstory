@@ -3,16 +3,28 @@ import { Platform } from "react-native";
 import themeConfig from "@/theme.config";
 
 export type ColorScheme = "light" | "dark";
-export type ThemePresetId = "default" | "mimic-sentient-trail";
+export type ThemePresetId =
+  | "paper-ink-narrative"
+  | "default"
+  | "mimic-sentient-trail";
 
-export const ThemePresetIds = ["default", "mimic-sentient-trail"] as const;
-export const DEFAULT_THEME_PRESET_ID: ThemePresetId = "default";
+export const ThemePresetIds = [
+  "paper-ink-narrative",
+  "default",
+  "mimic-sentient-trail",
+] as const;
+export const DEFAULT_THEME_PRESET_ID: ThemePresetId = "paper-ink-narrative";
 
 export const ThemePresets = [
   {
+    id: "paper-ink-narrative" as ThemePresetId,
+    label: "\u7EB8\u58A8\u53D9\u5883",
+    description: "\u5B98\u7F51\u540C\u6B3E\u6E29\u6DA6\u53D9\u4E8B\u98CE\u683C",
+  },
+  {
     id: "default" as ThemePresetId,
-    label: "\u7ECF\u5178\u9ED8\u8BA4",
-    description: "\u539F\u59CB\u6697\u8272\u53D9\u4E8B\u98CE\u683C",
+    label: "\u591C\u5E55\u7EEF\u7AE0",
+    description: "\u7ECF\u5178\u6697\u8272\u5267\u573A\u98CE\u683C",
   },
   {
     id: "mimic-sentient-trail" as ThemePresetId,
@@ -68,13 +80,39 @@ const MimicSentientTrailPalette: ThemeTokenPalette = {
   },
 };
 
+const PaperInkNarrativePalette: ThemeTokenPalette = {
+  light: {
+    primary: "#A86C3C",
+    background: "#FBF8F1",
+    surface: "#FFFDF9",
+    foreground: "#241D16",
+    muted: "#6E6459",
+    border: "#E7DED0",
+    success: "#3E9B73",
+    warning: "#C78A2C",
+    error: "#C2614F",
+  },
+  dark: {
+    primary: "#BC8457",
+    background: "#F3ECE0",
+    surface: "#FAF4EA",
+    foreground: "#31271E",
+    muted: "#857666",
+    border: "#D4C5B4",
+    success: "#4D9C78",
+    warning: "#C18A39",
+    error: "#BD6557",
+  },
+};
+
 export const ThemePresetPalettes: Record<ThemePresetId, ThemeTokenPalette> = {
+  "paper-ink-narrative": PaperInkNarrativePalette,
   default: buildSchemePalette(ThemeColors),
   "mimic-sentient-trail": MimicSentientTrailPalette,
 };
 
 // Backward-compatible export (existing callsites read SchemeColors[scheme]).
-export const SchemeColors = ThemePresetPalettes.default;
+export const SchemeColors = ThemePresetPalettes[DEFAULT_THEME_PRESET_ID];
 
 type RuntimePalette = ThemeTokenPaletteItem & {
   text: string;
@@ -118,8 +156,8 @@ export function getThemeColors(
 }
 
 export const Colors = {
-  light: getThemeColors("default", "light"),
-  dark: getThemeColors("default", "dark"),
+  light: getThemeColors(DEFAULT_THEME_PRESET_ID, "light"),
+  dark: getThemeColors(DEFAULT_THEME_PRESET_ID, "dark"),
 } satisfies Record<ColorScheme, RuntimePalette>;
 
 export type ThemeColorPalette = (typeof Colors)[ColorScheme];
@@ -144,8 +182,8 @@ export const Fonts = Platform.select({
   web: {
     sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
+    rounded:
+      "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
     mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
   },
 });
-

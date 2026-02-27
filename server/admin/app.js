@@ -10,8 +10,15 @@ const DEFAULT_LIMIT = 20;
 const STATUS_LABEL = {
   pending: "Pending",
   approved: "Approved",
+  handled: "Handled",
   rejected: "Rejected",
   unpublished: "Unpublished",
+};
+
+const STATUS_OPTIONS_BY_TYPE = {
+  prompt: ["pending", "approved", "rejected", "unpublished"],
+  story: ["pending", "approved", "rejected", "unpublished"],
+  report: ["pending", "handled", "rejected"],
 };
 
 const state = {
@@ -144,6 +151,22 @@ function parsePositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function syncStatusOptions(type) {
+  if (!statusSel) return;
+  const current = statusSel.value;
+  const options = STATUS_OPTIONS_BY_TYPE[type] || STATUS_OPTIONS_BY_TYPE.prompt;
+
+  statusSel.replaceChildren();
+  options.forEach((status) => {
+    const option = document.createElement("option");
+    option.value = status;
+    option.textContent = STATUS_LABEL[status] || status;
+    statusSel.appendChild(option);
+  });
+
+  statusSel.value = options.includes(current) ? current : options[0];
+}
+
 function getPaginationParams() {
   const page = parsePositiveInt(pageInput?.value, state.page || DEFAULT_PAGE);
   const limit = Math.min(
@@ -184,6 +207,11 @@ function buildSummary(type, item) {
   if (type === "prompt") {
     return item.description || "No description";
   }
+  if (type === "report") {
+    const reason = item.reasonText || item.reasonType || "No reason";
+    const target = item.targetTitle || item.targetUuid || "Unknown target";
+    return `Report target: ${target} | Reason: ${reason}`;
+  }
   return item.premise || "No premise";
 }
 
@@ -193,10 +221,17 @@ function buildPayloadText(type, item) {
       ? item.promptsJson
       : JSON.stringify(item.promptsJson ?? {}, null, 2);
   }
+  if (type === "report") {
+    return JSON.stringify(item, null, 2);
+  }
   return JSON.stringify(item, null, 2);
 }
 
-function getActionsByStatus(status) {
+function getActionsByStatus(type, status) {
+  if (type === "report") {
+    if (status === "pending") return ["handle", "reject"];
+    return [];
+  }
   if (status === "pending") return ["approve", "reject"];
   if (status === "approved") return ["unpublish"];
   if (status === "rejected" || status === "unpublished") return ["restore"];
@@ -208,6 +243,33 @@ async function performAction(type, uuid, action, reason = "") {
 
   let path = "";
   let body;
+
+  if (type === "report") {
+    if (action === "handle") {
+      path = `/admin/reports/${uuid}/handle`;
+      body = { note: reason.trim() };
+    } else if (action === "reject") {
+      path = `/admin/reports/${uuid}/reject`;
+      body = { note: reason.trim() };
+    } else {
+      throw new Error("Unknown action");
+    }
+
+    state.busyItemIds.add(uuid);
+    renderActionLoading(uuid);
+
+    try {
+      await request(path, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setStatus("Action completed", "ok");
+      await loadDashboard();
+    } finally {
+      state.busyItemIds.delete(uuid);
+    }
+    return;
+  }
 
   if (action === "approve") {
     path = `/admin/review/${type}/${uuid}/approve`;
@@ -251,8 +313,9 @@ function renderActionLoading(uuid) {
 }
 
 function renderStats(stats, type) {
-  const typeStats = stats?.[type] || {};
-  const statuses = ["pending", "approved", "rejected", "unpublished"];
+  const typeStats = type === "report" ? stats || {} : stats?.[type] || {};
+  const statuses =
+    STATUS_OPTIONS_BY_TYPE[type] || STATUS_OPTIONS_BY_TYPE.prompt;
 
   statsGridEl.replaceChildren();
   statuses.forEach((status) => {
@@ -266,6 +329,10 @@ function renderStats(stats, type) {
 }
 
 function renderItem(type, item) {
+  if (type === "report") {
+    return renderReportItem(item);
+  }
+
   const uuid = String(item?.uuid || "");
   const titleText = type === "prompt" ? item?.name : item?.title;
   const status = String(item?.status || "pending");
@@ -334,7 +401,7 @@ function renderItem(type, item) {
   reasonInput.placeholder = "Reason for reject/unpublish (optional)";
   actions.appendChild(reasonInput);
 
-  getActionsByStatus(status).forEach((actionName) => {
+  getActionsByStatus(type, status).forEach((actionName) => {
     const btn = createElement("button", "btn");
     btn.type = "button";
 
@@ -363,9 +430,118 @@ function renderItem(type, item) {
     actions.appendChild(btn);
   });
 
-  if (!getActionsByStatus(status).length) {
+  if (!getActionsByStatus(type, status).length) {
     reasonInput.disabled = true;
     reasonInput.placeholder = "No available actions for current status";
+  }
+
+  if (state.busyItemIds.has(uuid)) {
+    const controls = actions.querySelectorAll("button, input");
+    controls.forEach((control) => {
+      control.disabled = true;
+    });
+  }
+
+  card.appendChild(actions);
+  return card;
+}
+
+function renderReportItem(item) {
+  const uuid = String(item?.uuid || "");
+  const status = String(item?.status || "pending");
+  const targetType = item?.targetType || "unknown";
+  const targetTitle =
+    item?.targetTitle || item?.targetUuid || "(unknown target)";
+  const targetStatus = item?.targetStatus || "unknown";
+
+  const card = createElement("article", "item");
+  card.dataset.uuid = uuid;
+
+  const head = createElement("div", "item-head");
+  const title = createElement(
+    "h3",
+    "item-title",
+    `[${targetType}] ${targetTitle}`,
+  );
+  head.appendChild(title);
+
+  const badges = createElement("div", "badges");
+  badges.appendChild(
+    createElement(
+      "span",
+      statusBadgeClass(status),
+      STATUS_LABEL[status] || status,
+    ),
+  );
+  badges.appendChild(
+    createElement("span", "badge badge-meta", toLocalTime(item?.createdAt)),
+  );
+  head.appendChild(badges);
+  card.appendChild(head);
+
+  const reporter = item?.reporter?.nickname || "unknown";
+  card.appendChild(createElement("p", "meta", `Reporter: ${reporter}`));
+  card.appendChild(
+    createElement("p", "meta", `Target UUID: ${item?.targetUuid || "-"}`),
+  );
+  card.appendChild(
+    createElement("p", "meta", `Target status: ${targetStatus}`),
+  );
+  card.appendChild(
+    createElement("p", "meta", `Reason type: ${item?.reasonType || "other"}`),
+  );
+  if (item?.handledAt) {
+    card.appendChild(
+      createElement("p", "meta", `Handled at: ${toLocalTime(item.handledAt)}`),
+    );
+  }
+  if (item?.handledNote) {
+    card.appendChild(
+      createElement("p", "meta", `Handle note: ${item.handledNote}`),
+    );
+  }
+
+  const desc = createElement("p", "desc", item?.reasonText || "No description");
+  card.appendChild(desc);
+
+  const detail = createElement("details");
+  const summary = createElement("summary", "", "View full payload");
+  const pre = createElement("pre");
+  pre.textContent = buildPayloadText("report", item);
+  detail.appendChild(summary);
+  detail.appendChild(pre);
+  card.appendChild(detail);
+
+  const actions = createElement("div", "actions");
+  const noteInput = createElement("input");
+  noteInput.placeholder = "Handle note (optional)";
+  actions.appendChild(noteInput);
+
+  getActionsByStatus("report", status).forEach((actionName) => {
+    const btn = createElement("button", "btn");
+    btn.type = "button";
+
+    if (actionName === "handle") {
+      btn.classList.add("btn-primary");
+      btn.textContent = "Mark Handled";
+    } else if (actionName === "reject") {
+      btn.classList.add("btn-danger");
+      btn.textContent = "Reject Report";
+    }
+
+    btn.addEventListener("click", async () => {
+      try {
+        await performAction("report", uuid, actionName, noteInput.value);
+      } catch (error) {
+        setStatus(toErrorMessage(error, "Action failed"), "error");
+      }
+    });
+    actions.appendChild(btn);
+  });
+
+  if (!getActionsByStatus("report", status).length) {
+    noteInput.disabled = true;
+    noteInput.placeholder = "No available actions for current status";
   }
 
   if (state.busyItemIds.has(uuid)) {
@@ -395,7 +571,10 @@ function renderList(items, type) {
 }
 
 async function loadStats(type) {
-  const stats = await request("/admin/review/stats");
+  const stats =
+    type === "report"
+      ? await request("/admin/reports/stats")
+      : await request("/admin/review/stats");
   renderStats(stats, type);
 }
 
@@ -406,8 +585,9 @@ async function loadItems(type, status, keyword, page, limit) {
   query.set("page", String(page));
   query.set("limit", String(limit));
   const qs = query.toString();
-  const path =
-    type === "prompt" ? "/admin/review/prompts" : "/admin/review/stories";
+  let path = "/admin/review/stories";
+  if (type === "prompt") path = "/admin/review/prompts";
+  if (type === "report") path = "/admin/reports";
   return request(qs ? `${path}?${qs}` : path);
 }
 
@@ -501,6 +681,7 @@ document.getElementById("loadBtn").addEventListener("click", async () => {
 });
 
 typeSel.addEventListener("change", () => {
+  syncStatusOptions(typeSel.value);
   if (!state.accessToken) return;
   resetToFirstPage();
   loadDashboard().catch(onLoadError);
@@ -566,5 +747,6 @@ if (nextPageBtn) {
 }
 
 loadSavedLogin();
+syncStatusOptions(typeSel.value);
 renderPagination();
 setStatus("Login to load review data", "info");

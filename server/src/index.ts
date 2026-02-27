@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { adminRoutes } from "./routes/admin.js";
 import { authRoutes } from "./routes/auth.js";
 import { promptRoutes } from "./routes/prompts.js";
+import { reportRoutes } from "./routes/reports.js";
 import { storyRoutes } from "./routes/stories.js";
 import { AppError } from "./utils/errors.js";
 
@@ -44,7 +45,9 @@ app.setErrorHandler((error, request, reply) => {
   }
 
   if ((error as { validation?: unknown }).validation) {
-    reply.status(400).send({ error: "请求参数无效", details: (error as Error).message });
+    reply
+      .status(400)
+      .send({ error: "请求参数无效", details: (error as Error).message });
     return;
   }
 
@@ -69,9 +72,10 @@ await app.register(
     await instance.register(authRoutes);
     await instance.register(promptRoutes);
     await instance.register(storyRoutes);
+    await instance.register(reportRoutes);
     await instance.register(adminRoutes);
   },
-  { prefix: "/v1" }
+  { prefix: "/v1" },
 );
 
 try {

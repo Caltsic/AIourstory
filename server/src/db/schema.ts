@@ -209,3 +209,45 @@ export const refreshTokens = sqliteTable(
     index("idx_refresh_tokens_expires").on(table.expiresAt),
   ],
 );
+
+export const contentReports = sqliteTable(
+  "content_reports",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    uuid: text("uuid").notNull().unique(),
+    reporterId: integer("reporter_id")
+      .notNull()
+      .references(() => users.id),
+    targetType: text("target_type", { enum: ["prompt", "story"] }).notNull(),
+    targetUuid: text("target_uuid").notNull(),
+    reasonType: text("reason_type", {
+      enum: ["illegal", "sexual", "abuse", "spam", "other"],
+    })
+      .notNull()
+      .default("other"),
+    reasonText: text("reason_text").notNull().default(""),
+    status: text("status", { enum: ["pending", "handled", "rejected"] })
+      .notNull()
+      .default("pending"),
+    handledBy: integer("handled_by").references(() => users.id),
+    handledNote: text("handled_note"),
+    handledAt: text("handled_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    uniqueIndex("idx_content_reports_unique_user_target").on(
+      table.reporterId,
+      table.targetType,
+      table.targetUuid,
+    ),
+    index("idx_content_reports_status").on(table.status),
+    index("idx_content_reports_target").on(table.targetType, table.targetUuid),
+    index("idx_content_reports_reporter").on(table.reporterId),
+    index("idx_content_reports_created").on(table.createdAt),
+  ],
+);

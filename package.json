@@ -1,6 +1,6 @@
 {
   "name": "app-template",
-  "version": "1.0.27",
+  "version": "1.0.28",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
@@ -25,6 +25,8 @@
     "expo-audio": "~1.1.1",
     "expo-build-properties": "^1.0.10",
     "expo-constants": "~18.0.13",
+    "expo-document-picker": "~14.0.8",
+    "expo-file-system": "~19.0.21",
     "expo-font": "~14.0.11",
     "expo-haptics": "~15.0.8",
     "expo-image": "~3.0.11",
@@ -34,6 +36,7 @@
     "expo-notifications": "~0.32.16",
     "expo-router": "~6.0.23",
     "expo-secure-store": "~15.0.8",
+    "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "expo-symbols": "~1.0.8",

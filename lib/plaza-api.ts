@@ -150,3 +150,20 @@ export async function downloadStory(uuid: string) {
   );
   return response.data;
 }
+
+export async function submitContentReport(payload: {
+  targetType: "prompt" | "story";
+  targetUuid: string;
+  reasonType: "illegal" | "sexual" | "abuse" | "spam" | "other";
+  reasonText?: string;
+}) {
+  try {
+    const response = await apiClient.post<{ success: boolean; uuid: string }>(
+      "/reports",
+      payload,
+    );
+    return response.data;
+  } catch (error) {
+    throw new Error(parseApiError(error, "Report submit failed"));
+  }
+}

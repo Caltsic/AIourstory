@@ -13,6 +13,9 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { useRouter } from "expo-router";
 
 import { ScreenContainer } from "@/components/screen-container";
@@ -24,8 +27,10 @@ import {
   getDefaultPrompts,
   getActivePresetId,
   setActivePresetId,
+  exportAllPresetsToText,
   listPresets,
   getPreset,
+  parsePresetsFromExportText,
   savePreset,
   deletePreset,
   generatePresetId,
@@ -115,6 +120,98 @@ export default function PromptsScreen() {
       pathname: "/plaza/submit-prompt" as any,
       params: activePresetId ? { presetId: activePresetId } : undefined,
     });
+  }
+
+  async function handleExportTxt() {
+    try {
+      const exportText = await exportAllPresetsToText();
+      const fileName = `aistory-prompts-${new Date().toISOString().slice(0, 10)}.txt`;
+
+      if (Platform.OS === "web") {
+        const blob = new Blob([exportText], {
+          type: "text/plain;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName;
+        anchor.click();
+        URL.revokeObjectURL(url);
+        Alert.alert("导出成功", "提示词配置 txt 已下载");
+        return;
+      }
+
+      const cacheDir = FileSystem.cacheDirectory;
+      if (!cacheDir) {
+        throw new Error("无法访问缓存目录");
+      }
+
+      const fileUri = `${cacheDir}${fileName}`;
+      await FileSystem.writeAsStringAsync(fileUri, exportText, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "text/plain",
+          dialogTitle: "导出提示词配置",
+        });
+        return;
+      }
+
+      Alert.alert("导出成功", `文件已生成：${fileUri}`);
+    } catch (error) {
+      Alert.alert("导出失败", error instanceof Error ? error.message : "导出失败");
+    }
+  }
+
+  async function handleImportTxt() {
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+        type: ["text/plain"],
+      });
+
+      if (picked.canceled || !picked.assets?.[0]) {
+        return;
+      }
+
+      const text = await FileSystem.readAsStringAsync(picked.assets[0].uri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const imported = parsePresetsFromExportText(text);
+      if (!imported.length) {
+        Alert.alert("导入失败", "未解析到可导入的配置");
+        return;
+      }
+
+      const createdIds: string[] = [];
+      for (const item of imported) {
+        const id = generatePresetId();
+        createdIds.push(id);
+
+        await savePreset({
+          id,
+          name: `${item.name}（导入）`,
+          description: item.description || "从 txt 导入",
+          imageUri: item.imageUri,
+          prompts: item.prompts,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+
+      if (createdIds.length > 0) {
+        await setActivePresetId(createdIds[0]);
+        setActiveId(createdIds[0]);
+      }
+
+      await loadData();
+      Alert.alert("导入成功", `已导入 ${createdIds.length} 个新配置`);
+    } catch (error) {
+      Alert.alert("导入失败", error instanceof Error ? error.message : "导入失败");
+    }
   }
 
   function openEditPresetMeta(preset: PromptPreset) {
@@ -280,6 +377,12 @@ export default function PromptsScreen() {
         <View style={[styles.header, { borderBottomColor: colors.border }]}> 
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>提示词配置</Text>
           <View style={{ flexDirection: "row", gap: 10 }}>
+            <TouchableOpacity onPress={handleImportTxt} style={styles.headerAction}>
+              <IconSymbol name="square.and.arrow.down" size={22} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleExportTxt} style={styles.headerAction}>
+              <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
+            </TouchableOpacity>
             <TouchableOpacity onPress={handleShareToPlaza} style={styles.headerAction}>
               <IconSymbol name="person.2.fill" size={22} color={colors.primary} />
             </TouchableOpacity>

@@ -3,12 +3,18 @@ import { FastifyInstance } from "fastify";
 
 import { config } from "../config.js";
 import { db } from "../db/index.js";
-import { promptPresets, storySettings, users } from "../db/schema.js";
+import {
+  contentReports,
+  promptPresets,
+  storySettings,
+  users,
+} from "../db/schema.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { badRequest, notFound } from "../utils/errors.js";
 
 type ReviewType = "prompt" | "story";
 type ReviewStatus = "pending" | "approved" | "rejected" | "unpublished";
+type ReportStatus = "pending" | "handled" | "rejected";
 
 const REVIEW_STATUSES: ReviewStatus[] = [
   "pending",
@@ -16,6 +22,8 @@ const REVIEW_STATUSES: ReviewStatus[] = [
   "rejected",
   "unpublished",
 ];
+
+const REPORT_STATUSES: ReportStatus[] = ["pending", "handled", "rejected"];
 
 function safeJsonArray(input: string): string[] {
   try {
@@ -32,6 +40,14 @@ function normalizeReviewStatus(input?: string): ReviewStatus {
     return input as ReviewStatus;
   }
   throw badRequest("invalid review status");
+}
+
+function normalizeReportStatus(input?: string): ReportStatus {
+  if (!input) return "pending";
+  if (REPORT_STATUSES.includes(input as ReportStatus)) {
+    return input as ReportStatus;
+  }
+  throw badRequest("invalid report status");
 }
 
 function rowsAffected(result: unknown): number {
@@ -66,6 +82,26 @@ const reviewParamsSchema = {
   },
 } as const;
 
+const reportParamsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["uuid"],
+  properties: {
+    uuid: { type: "string", minLength: 8, maxLength: 128 },
+  },
+} as const;
+
+const reportListQuerySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: { type: "string", enum: REPORT_STATUSES },
+    keyword: { type: "string", minLength: 1, maxLength: 100 },
+    page: { type: "string", pattern: "^[1-9]\\d*$" },
+    limit: { type: "string", pattern: "^[1-9]\\d*$" },
+  },
+} as const;
+
 const rejectBodySchema = {
   type: "object",
   additionalProperties: false,
@@ -80,6 +116,14 @@ const moderateBodySchema = {
   additionalProperties: false,
   properties: {
     reason: { type: "string", minLength: 0, maxLength: 500 },
+  },
+} as const;
+
+const reportModerateBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    note: { type: "string", minLength: 0, maxLength: 500 },
   },
 } as const;
 
@@ -131,8 +175,165 @@ export async function adminRoutes(app: FastifyInstance) {
     },
   );
 
+  app.get(
+    "/admin/reports/stats",
+    { preHandler: [requireAdmin], config: adminRateLimitConfig },
+    async () => {
+      const stats = Object.fromEntries(
+        REPORT_STATUSES.map((status) => [status, 0]),
+      ) as Record<ReportStatus, number>;
+
+      const rows = await db
+        .select({ status: contentReports.status, count: sql<number>`count(*)` })
+        .from(contentReports)
+        .groupBy(contentReports.status);
+
+      for (const row of rows) {
+        const status = row.status as ReportStatus;
+        if (REPORT_STATUSES.includes(status)) stats[status] = row.count;
+      }
+
+      return stats;
+    },
+  );
+
   app.get<{
-    Querystring: { status?: string; keyword?: string; page?: string; limit?: string };
+    Querystring: {
+      status?: string;
+      keyword?: string;
+      page?: string;
+      limit?: string;
+    };
+  }>(
+    "/admin/reports",
+    {
+      preHandler: [requireAdmin],
+      config: adminRateLimitConfig,
+      schema: { querystring: reportListQuerySchema },
+    },
+    async (request) => {
+      const status = normalizeReportStatus(request.query.status);
+      const keyword = request.query.keyword?.trim();
+      const page = parsePositiveInt(request.query.page, 1);
+      const limit = Math.min(parsePositiveInt(request.query.limit, 20), 100);
+      const offset = (page - 1) * limit;
+
+      const whereList = [eq(contentReports.status, status)];
+      if (keyword) {
+        whereList.push(
+          or(
+            like(contentReports.reasonText, `%${keyword}%`),
+            like(promptPresets.name, `%${keyword}%`),
+            like(storySettings.title, `%${keyword}%`),
+            like(users.nickname, `%${keyword}%`),
+          )!,
+        );
+      }
+
+      const whereClause =
+        whereList.length === 1 ? whereList[0] : and(...whereList);
+
+      const rows = await db
+        .select({
+          uuid: contentReports.uuid,
+          targetType: contentReports.targetType,
+          targetUuid: contentReports.targetUuid,
+          reasonType: contentReports.reasonType,
+          reasonText: contentReports.reasonText,
+          status: contentReports.status,
+          handledNote: contentReports.handledNote,
+          handledAt: contentReports.handledAt,
+          createdAt: contentReports.createdAt,
+          reporterUuid: users.uuid,
+          reporterNickname: users.nickname,
+          promptTitle: promptPresets.name,
+          promptStatus: promptPresets.status,
+          storyTitle: storySettings.title,
+          storyStatus: storySettings.status,
+        })
+        .from(contentReports)
+        .leftJoin(users, eq(users.id, contentReports.reporterId))
+        .leftJoin(
+          promptPresets,
+          and(
+            eq(contentReports.targetType, "prompt"),
+            eq(contentReports.targetUuid, promptPresets.uuid),
+          )!,
+        )
+        .leftJoin(
+          storySettings,
+          and(
+            eq(contentReports.targetType, "story"),
+            eq(contentReports.targetUuid, storySettings.uuid),
+          )!,
+        )
+        .where(whereClause)
+        .orderBy(desc(contentReports.createdAt))
+        .limit(limit)
+        .offset(offset);
+
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(contentReports)
+        .leftJoin(users, eq(users.id, contentReports.reporterId))
+        .leftJoin(
+          promptPresets,
+          and(
+            eq(contentReports.targetType, "prompt"),
+            eq(contentReports.targetUuid, promptPresets.uuid),
+          )!,
+        )
+        .leftJoin(
+          storySettings,
+          and(
+            eq(contentReports.targetType, "story"),
+            eq(contentReports.targetUuid, storySettings.uuid),
+          )!,
+        )
+        .where(whereClause)
+        .get();
+
+      const total = countResult?.count ?? 0;
+      const items = rows.map((row) => {
+        const targetTitle =
+          row.targetType === "prompt"
+            ? row.promptTitle || "(prompt removed)"
+            : row.storyTitle || "(story removed)";
+        const targetStatus =
+          row.targetType === "prompt"
+            ? row.promptStatus || "unknown"
+            : row.storyStatus || "unknown";
+
+        return {
+          uuid: row.uuid,
+          targetType: row.targetType,
+          targetUuid: row.targetUuid,
+          targetTitle,
+          targetStatus,
+          reasonType: row.reasonType,
+          reasonText: row.reasonText,
+          status: row.status,
+          handledNote: row.handledNote,
+          handledAt: row.handledAt,
+          createdAt: row.createdAt,
+          reporter: {
+            uuid: row.reporterUuid ?? "",
+            nickname: row.reporterNickname ?? "unknown",
+          },
+        };
+      });
+
+      return { items, total, page, limit };
+    },
+  );
+
+  app.get<{
+    Querystring: {
+      status?: string;
+      keyword?: string;
+      page?: string;
+      limit?: string;
+    };
   }>(
     "/admin/review/prompts",
     {
@@ -209,7 +410,12 @@ export async function adminRoutes(app: FastifyInstance) {
   );
 
   app.get<{
-    Querystring: { status?: string; keyword?: string; page?: string; limit?: string };
+    Querystring: {
+      status?: string;
+      keyword?: string;
+      page?: string;
+      limit?: string;
+    };
   }>(
     "/admin/review/stories",
     {
@@ -570,6 +776,98 @@ export async function adminRoutes(app: FastifyInstance) {
       }
 
       return { success: true, status: "approved" as const };
+    },
+  );
+
+  app.post<{
+    Params: { uuid: string };
+    Body: { note?: string };
+  }>(
+    "/admin/reports/:uuid/handle",
+    {
+      preHandler: [requireAdmin],
+      config: adminRateLimitConfig,
+      schema: { params: reportParamsSchema, body: reportModerateBodySchema },
+    },
+    async (request) => {
+      const report = await db
+        .select()
+        .from(contentReports)
+        .where(eq(contentReports.uuid, request.params.uuid))
+        .get();
+      if (!report) throw notFound("report not found");
+      if (report.status !== "pending") {
+        throw badRequest("only pending reports can be handled");
+      }
+
+      const adminUserId = await findAdminUserId(request.user!.sub);
+      const handledAt = new Date().toISOString();
+      const result = await db
+        .update(contentReports)
+        .set({
+          status: "handled",
+          handledBy: adminUserId,
+          handledNote: request.body.note?.trim() || null,
+          handledAt,
+          updatedAt: handledAt,
+        })
+        .where(
+          and(
+            eq(contentReports.id, report.id),
+            eq(contentReports.status, "pending"),
+          ),
+        );
+
+      if (rowsAffected(result) === 0) {
+        throw badRequest("report status changed, please refresh and retry");
+      }
+      return { success: true, status: "handled" as const };
+    },
+  );
+
+  app.post<{
+    Params: { uuid: string };
+    Body: { note?: string };
+  }>(
+    "/admin/reports/:uuid/reject",
+    {
+      preHandler: [requireAdmin],
+      config: adminRateLimitConfig,
+      schema: { params: reportParamsSchema, body: reportModerateBodySchema },
+    },
+    async (request) => {
+      const report = await db
+        .select()
+        .from(contentReports)
+        .where(eq(contentReports.uuid, request.params.uuid))
+        .get();
+      if (!report) throw notFound("report not found");
+      if (report.status !== "pending") {
+        throw badRequest("only pending reports can be rejected");
+      }
+
+      const adminUserId = await findAdminUserId(request.user!.sub);
+      const handledAt = new Date().toISOString();
+      const result = await db
+        .update(contentReports)
+        .set({
+          status: "rejected",
+          handledBy: adminUserId,
+          handledNote: request.body.note?.trim() || null,
+          handledAt,
+          updatedAt: handledAt,
+        })
+        .where(
+          and(
+            eq(contentReports.id, report.id),
+            eq(contentReports.status, "pending"),
+          ),
+        );
+
+      if (rowsAffected(result) === 0) {
+        throw badRequest("report status changed, please refresh and retry");
+      }
+      return { success: true, status: "rejected" as const };
     },
   );
 }

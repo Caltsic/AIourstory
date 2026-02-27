@@ -78,6 +78,25 @@
 
 - `app/game.tsx` 关键链路仍存在原地修改 `story` 并跨异步写回：自动翻页、fallback choices、续写主链路、生图链路、角色删除。
 - `lib/llm-client.ts` 除 `continueStory` 外，多个 `fetch` 调用没有超时控制，存在请求悬挂风险。
+
+## 2026-02-27（举报功能闭环）
+
+- 现状确认：广场详情页仅有点赞/下载，无举报入口，不满足“投诉举报+处置留痕”闭环。
+- 新增举报数据模型 `content_reports`，含 `reporter + target + reason + status + handledBy/handledAt`，并加唯一索引限制同用户重复举报同目标。
+- 用户举报接口新增：`POST /v1/reports`，仅允许已认证用户提交，且仅对 `approved` 内容开放举报。
+- 管理端新增举报统计与列表：`GET /v1/admin/reports/stats`、`GET /v1/admin/reports`。
+- 管理端新增举报处置动作：`POST /v1/admin/reports/:uuid/handle` 与 `.../reject`（仅 pending 可操作，含并发状态校验）。
+- 管理后台前端已支持 `report` 类型筛选与卡片渲染，并显示举报原因、目标状态、处理备注。
+- App 端在 `prompt-detail` 与 `story-detail` 新增举报按钮，内置原因选项并调用新接口。
+
+## 2026-02-27（提示词 TXT 导入导出）
+
+- 现状确认：提示词页面仅支持预设增删改与投稿，不支持文件级导入导出。
+- 新增导出格式：`# AIourStory Prompt Presets Export` + JSON payload（含 `format/version/exportedAt/presets`），可长期兼容演进。
+- 导出范围为“默认配置 + 所有自定义预设”，满足一次性备份。
+- 导入解析支持从文本中提取 JSON 数据块，校验格式与版本，并补齐缺失 prompt key 默认值。
+- 导入策略为“全部作为新预设写入”，名称自动追加 `（导入）`，不覆盖现有预设。
+- App 页面已接入：顶部新增“导入 txt / 导出 txt”按钮；原生端支持文档选择+分享，Web 支持直接下载 txt。
 - `lib/story-store.ts` 的 `JSON.parse` 在 `getStoryIds/getAllStories/getStory` 路径缺少兜底，脏数据会直接抛异常。
 - 当前文件内容主体已恢复可读中文，但仍需在本轮修复中顺带清理注释可读性并避免乱码回归。
 

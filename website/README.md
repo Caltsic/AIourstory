@@ -24,6 +24,7 @@ python -m http.server 4173
 
 - `/v1/` 反代到 `127.0.0.1:3000/v1/`
 - `/health` 反代到 `127.0.0.1:3000/health`
+- `/admin/` 指向 `server/admin` 静态后台页面
 - 其余路径回退到静态页面
 
 示例（仅展示核心片段）：
@@ -39,6 +40,11 @@ location /v1/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+
+location /admin/ {
+    root /opt/aistory/ai-story-game/server;
+    try_files $uri $uri/ /admin/index.html;
 }
 
 location / {

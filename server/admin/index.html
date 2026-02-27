@@ -31,8 +31,16 @@
         color: var(--text);
         font-family: "IBM Plex Sans", "Noto Sans", "Segoe UI", sans-serif;
         background:
-          radial-gradient(circle at 18% 14%, rgba(14, 116, 144, 0.12), transparent 36%),
-          radial-gradient(circle at 82% 2%, rgba(2, 132, 199, 0.14), transparent 34%),
+          radial-gradient(
+            circle at 18% 14%,
+            rgba(14, 116, 144, 0.12),
+            transparent 36%
+          ),
+          radial-gradient(
+            circle at 82% 2%,
+            rgba(2, 132, 199, 0.14),
+            transparent 34%
+          ),
           linear-gradient(180deg, #f3f8fc 0%, #eaf1f8 100%);
       }
 
@@ -148,7 +156,9 @@
         cursor: pointer;
         font-size: 13px;
         font-weight: 700;
-        transition: filter 160ms ease, transform 160ms ease;
+        transition:
+          filter 160ms ease,
+          transform 160ms ease;
       }
 
       .btn:hover {
@@ -272,6 +282,11 @@
         color: var(--ok);
       }
 
+      .badge-status-handled {
+        background: var(--ok-soft);
+        color: var(--ok);
+      }
+
       .badge-status-rejected,
       .badge-status-unpublished {
         background: var(--danger-soft);
@@ -363,7 +378,10 @@
     <main class="frame">
       <header class="hero">
         <h1>AIourStory Admin Review</h1>
-        <p>Review pending submissions and manage approved/rejected/unpublished content in one place.</p>
+        <p>
+          Review pending submissions and manage approved/rejected/unpublished
+          content in one place.
+        </p>
       </header>
 
       <section class="stack">
@@ -380,7 +398,11 @@
             </div>
             <div class="field">
               <label for="password">Password</label>
-              <input id="password" type="password" placeholder="Enter password" />
+              <input
+                id="password"
+                type="password"
+                placeholder="Enter password"
+              />
             </div>
             <div class="field">
               <label>&nbsp;</label>
@@ -406,6 +428,7 @@
               <select id="typeSel">
                 <option value="prompt">Prompt</option>
                 <option value="story">Story</option>
+                <option value="report">Report</option>
               </select>
             </div>
             <div class="field">
@@ -413,13 +436,17 @@
               <select id="statusSel">
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
+                <option value="handled">Handled</option>
                 <option value="rejected">Rejected</option>
                 <option value="unpublished">Unpublished</option>
               </select>
             </div>
             <div class="field wide">
               <label for="keywordInput">Keyword</label>
-              <input id="keywordInput" placeholder="Filter by title/description/author" />
+              <input
+                id="keywordInput"
+                placeholder="Filter by title/description/author"
+              />
             </div>
             <div class="field">
               <label for="pageInput">Page</label>
@@ -438,10 +465,17 @@
               <button class="btn btn-primary" id="loadBtn">Load</button>
             </div>
           </div>
-          <div class="row" style="margin-top: 10px; align-items: center;">
-            <button class="btn btn-secondary" id="prevPageBtn" type="button">Prev</button>
-            <button class="btn btn-secondary" id="nextPageBtn" type="button">Next</button>
-            <span id="pageInfo" style="font-size: 12px; color: var(--muted);"></span>
+          <div class="row" style="margin-top: 10px; align-items: center">
+            <button class="btn btn-secondary" id="prevPageBtn" type="button">
+              Prev
+            </button>
+            <button class="btn btn-secondary" id="nextPageBtn" type="button">
+              Next
+            </button>
+            <span
+              id="pageInfo"
+              style="font-size: 12px; color: var(--muted)"
+            ></span>
           </div>
         </article>
 

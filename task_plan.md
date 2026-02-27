@@ -33,6 +33,50 @@
 - `pnpm run check` passed
 - `pnpm run test -- tests/story-store.test.ts` passed (21 tests total in run)
 
+## 2026-02-27 - 提示词 TXT 导入导出
+
+### Goal
+
+1. 支持将全部提示词配置导出为统一 `.txt`。
+2. 支持读取同格式 `.txt` 并一次性导入为新配置。
+3. 导入为新增预设，不覆盖现有配置。
+
+### Phases
+
+| Phase | Task                                 | Status    |
+| ----- | ------------------------------------ | --------- |
+| A     | 设计导出文本格式与解析器（版本化）   | completed |
+| B     | 存储层新增导出/导入解析 API          | completed |
+| C     | 提示词页面接入导入导出按钮和文件读写 | completed |
+| D     | 依赖安装与类型校验                   | completed |
+
+### Validation Result (2026-02-27)
+
+- `pnpm check` passed
+
+## 2026-02-27 - 广场举报闭环（Prompt/Story）
+
+### Goal
+
+1. 为提示词广场与故事广场补齐用户举报入口（前端可提交）。
+2. 后端新增举报数据模型与提交接口，防止重复举报刷接口。
+3. 管理后台新增举报列表与处置动作（处理/驳回），形成闭环。
+
+### Phases
+
+| Phase | Task                                              | Status    |
+| ----- | ------------------------------------------------- | --------- |
+| A     | 设计并落地举报表结构与迁移（含唯一索引）          | completed |
+| B     | 后端新增 `POST /v1/reports`，校验目标存在且可举报 | completed |
+| C     | 管理端新增举报列表、统计与处置接口                | completed |
+| D     | 客户端提示词/故事详情页接入举报按钮与原因选择     | completed |
+| E     | 编译验证（app/server）                            | completed |
+
+### Validation Result (2026-02-27)
+
+- `server/pnpm run build` passed
+- `pnpm check` passed
+
 ## 2026-02-25 - Restore Story Generation UX + Background/Concurrent Support
 
 ### Goal

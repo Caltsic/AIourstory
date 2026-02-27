@@ -78,6 +78,33 @@
   - `tests/new-character-normalizer.test.ts`
 - Running full validation now (`pnpm test`, `pnpm run check`).
 - Validation results:
+
+## 2026-02-27（举报功能开发）
+
+- 收到“开改并一次补齐漏洞”需求，开始实施广场举报闭环。
+- 已新增数据库迁移：`0003_content_reports.sql`，并更新 `_journal.json`。
+- 已扩展 schema：新增 `contentReports` 表与索引（包含同用户同目标唯一约束）。
+- 已新增后端路由：`server/src/routes/reports.ts`，并在 `server/src/index.ts` 注册。
+- 已扩展管理员路由 `server/src/routes/admin.ts`：举报统计/列表/处理/驳回接口。
+- 已扩展管理后台页面：`server/admin/index.html` 增加 Report 类型与 Handled 状态。
+- 已扩展管理后台逻辑：`server/admin/app.js` 支持举报卡片渲染与处置动作。
+- 已扩展客户端 API：`lib/plaza-api.ts` 新增 `submitContentReport`。
+- 已扩展客户端页面：`app/plaza/prompt-detail.tsx`、`app/plaza/story-detail.tsx` 新增举报入口。
+- 验证完成：`server/pnpm run build` passed，`pnpm check` passed。
+
+## 2026-02-27（提示词 TXT 导入导出）
+
+- 安装依赖：`expo-document-picker`、`expo-file-system`、`expo-sharing`。
+- 在 `lib/prompt-store.ts` 增加：
+  - `exportAllPresetsToText()`
+  - `parsePresetsFromExportText()`
+  - 导出 payload 版本化结构与 prompt key 归一化逻辑。
+- 在 `app/(tabs)/prompts.tsx` 增加：
+  - `handleExportTxt()`（Web 下载 / Native 生成并分享 txt）
+  - `handleImportTxt()`（选择 txt、解析并批量导入为新预设）
+  - 列表页顶部导入/导出入口按钮。
+- 修复 SDK 54 文件系统类型差异：改为使用 `expo-file-system/legacy` 读写字符串。
+- 验证完成：`pnpm check` passed。
   - `pnpm test` passed (3 files, 21 tests)
   - `pnpm run check` passed
 
