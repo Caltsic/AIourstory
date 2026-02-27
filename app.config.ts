@@ -45,7 +45,7 @@ function resolveAndroidVersionCode() {
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
-  version: "1.0.29",
+  version: "1.0.30",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,

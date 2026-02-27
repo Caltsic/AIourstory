@@ -192,3 +192,45 @@
 
 - `server/pnpm run build` passed
 - `pnpm run check` passed
+
+## 2026-02-27 - Image/Story Decoupling + Character Scale Presets
+
+### Goal
+
+1. Remove blocking between story generation and image generation.
+2. Allow starting portrait generation for another character while one portrait task is already running.
+3. Keep background scale presets unchanged, but change character scale presets to 100/125/150/175/200.
+
+### Phases
+
+| Phase | Task | Status |
+| ----- | ---- | ------ |
+| 1 | Locate all blocking guards and UI disabled conditions | completed |
+| 2 | Implement code changes in app/game.tsx | completed |
+| 3 | Validate with typecheck/tests | completed |
+
+### Validation Result (2026-02-27)
+
+- `pnpm check` passed
+- `pnpm test` passed (3 files, 21 tests)
+
+## 2026-02-27 - Story Generation Stage Progress Copy
+
+### Goal
+
+1. Show a clear stage label during story generation instead of only elapsed time.
+2. Cover both initial generation and continuation generation.
+3. Keep existing generation/cancel behavior unchanged.
+
+### Phases
+
+| Phase | Task | Status |
+| ----- | ---- | ------ |
+| 1 | Add stage state/labels and wire to generation flow checkpoints | completed |
+| 2 | Render stage text in generating panel UI | completed |
+| 3 | Validate with typecheck/tests | completed |
+
+### Validation Result (2026-02-27)
+
+- `pnpm check` passed
+- `pnpm test` passed (3 files, 21 tests)

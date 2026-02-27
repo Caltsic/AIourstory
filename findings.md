@@ -214,3 +214,36 @@
   - 新增 `/auth/reset-password`（`email+code+newPassword`）
 - 客户端登录页已重构为三流程：绑定（含验证码）、密码登录、忘记密码重置。
 - 广场页 `app/(tabs)/plaza.tsx` 已接入 cursor 分页并支持“加载更多”。
+
+## 2026-02-27 (image/story decoupling request)
+
+- Found explicit block in pp/game.tsx handleGenerateImage: returns when storyGeneratingActive is true.
+- Found explicit block in pp/game.tsx handleChoice: returns when imageGenerating is true.
+- Found global portrait gate if (!story || portraitGenerating) return; causing cross-character portrait generation to be blocked.
+- Current scale presets are shared as BG_SCALE_PRESETS = [50,75,100,125,150] for both background and character modes.
+
+## 2026-02-27 (image/story decoupling request - completion notes)
+
+- Removed cross-feature blocking guards:
+  - Deleted the story-generating guard inside `handleGenerateImage`.
+  - Deleted the image-generating guard inside `handleChoice`.
+- Portrait generation is now per-card concurrent via `portraitGeneratingIds` and `autoPortraitInFlightRef` task keys, so one card no longer blocks others.
+- Scale presets are now mode-specific:
+  - background: `50/75/100/125/150`
+  - character: `100/125/150/175/200`
+- Verified no remaining `if (false && ...)` placeholders are left in `app/game.tsx`.
+
+## 2026-02-27 (story generation stage progress copy)
+
+- Current generating UI only showed elapsed seconds and cancel action, without phase visibility.
+- Added explicit generation stage model in `app/game.tsx`:
+  - `prepare-context`
+  - `request-llm`
+  - `parse-response`
+  - `update-characters`
+  - `generate-summary`
+  - `save-story`
+- Stage transitions are now wired in both `generateInitial(...)` and `proceedWithChoice(...)` at concrete checkpoints.
+- Stage text is rendered as `当前阶段：...` under the existing timer text.
+- Added fallback behavior for re-entering a story already generating in background: defaults stage to `request-llm` when detailed phase is unknown.
+

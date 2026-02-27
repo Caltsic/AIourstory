@@ -235,3 +235,32 @@
 - 验证通过：
   - `server/pnpm run build` passed
   - `pnpm run check` passed
+
+## 2026-02-27 (image/story decoupling + scale presets)
+
+- Initialized a dedicated mini-plan in task_plan/findings/progress for this request.
+- Confirmed target file is pp/game.tsx; next step is code changes for guards, portrait concurrency, and character preset range.
+
+## 2026-02-27 (image/story decoupling + scale presets) - Completed
+
+- Cleaned up temporary no-op branches and removed `if (false && ...)` guards in `app/game.tsx`.
+- Confirmed final behavior:
+  - Story generation and image generation are no longer mutually blocking.
+  - Portrait generation is per-character concurrent (other cards remain clickable).
+  - Character scale presets are `100/125/150/175/200` while background presets remain unchanged.
+- Validation completed:
+  - `pnpm check` passed
+  - `pnpm test` passed (3 files, 21 tests)
+
+## 2026-02-27 (story generation stage progress copy) - Completed
+
+- Implemented stage label state and mapping in `app/game.tsx`.
+- Wired stage updates across initial generation and continuation generation checkpoints.
+- Added stage line in generating UI:
+  - `剧情生成中... 已生成 N 秒`
+  - `当前阶段：...`
+- Kept cancel flow and generation status persistence unchanged.
+- Validation completed:
+  - `pnpm check` passed
+  - `pnpm test` passed (3 files, 21 tests)
+

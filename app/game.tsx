@@ -64,6 +64,7 @@ const SUMMARY_REFRESH_DELTA_CHARS = Math.max(
 const AUTO_IMAGE_HISTORY_LIMIT = 30;
 const AUTO_READ_SPEEDS = [1, 2, 3, 4] as const;
 const BG_SCALE_PRESETS = [50, 75, 100, 125, 150] as const;
+const CHARACTER_SCALE_PRESETS = [100, 125, 150, 175, 200] as const;
 const SCALE_PANEL_AUTO_HIDE_MS = 2500;
 const AUTO_READ_DELAY_MS: Record<(typeof AUTO_READ_SPEEDS)[number], number> = {
   1: 1800,
@@ -134,6 +135,23 @@ interface SummaryCompressionTask {
   } | null>;
 }
 
+type GenerationStageKey =
+  | "prepare-context"
+  | "request-llm"
+  | "parse-response"
+  | "update-characters"
+  | "generate-summary"
+  | "save-story";
+
+const GENERATION_STAGE_LABELS: Record<GenerationStageKey, string> = {
+  "prepare-context": "组装上下文",
+  "request-llm": "请求模型",
+  "parse-response": "解析结果",
+  "update-characters": "更新角色",
+  "generate-summary": "生成摘要",
+  "save-story": "写入存档",
+};
+
 function countSegmentChars(segments: StorySegment[]): number {
   return segments.reduce((sum, segment) => {
     const textChars =
@@ -197,6 +215,8 @@ export default function GameScreen() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generationElapsedSeconds, setGenerationElapsedSeconds] = useState(0);
+  const [generationStage, setGenerationStage] =
+    useState<GenerationStageKey>("prepare-context");
   const [showMenu, setShowMenu] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [customInput, setCustomInput] = useState("");
@@ -217,8 +237,8 @@ export default function GameScreen() {
   const [editPersonality, setEditPersonality] = useState("");
   const [editBackground, setEditBackground] = useState("");
   const [editAppearance, setEditAppearance] = useState("");
-  const [portraitGenerating, setPortraitGenerating] = useState<string | null>(
-    null,
+  const [portraitGeneratingIds, setPortraitGeneratingIds] = useState<string[]>(
+    [],
   );
   const [portraitPreview, setPortraitPreview] = useState<{
     uri: string;
@@ -410,6 +430,15 @@ export default function GameScreen() {
     );
   }
 
+  function patchGenerationStage(
+    storyIdValue: string,
+    token: number,
+    stage: GenerationStageKey,
+  ) {
+    if (!canUpdateGenerationUI(storyIdValue, token)) return;
+    setGenerationStage(stage);
+  }
+
   async function patchStoryGenerationState(
     storyIdValue: string,
     status: Story["storyGenerationStatus"],
@@ -463,6 +492,7 @@ export default function GameScreen() {
     activeStoryIdRef.current = storyId || "";
     setGenerating(false);
     setGenerationElapsedSeconds(0);
+    setGenerationStage("prepare-context");
     clearGenerationTimer();
     generationAbortRef.current =
       (storyId ? storyGenerationControllers.get(storyId) : null) ?? null;
@@ -472,7 +502,11 @@ export default function GameScreen() {
     clearGenerationTimer();
     if (!storyGeneratingActive) {
       setGenerationElapsedSeconds(0);
+      setGenerationStage("prepare-context");
       return;
+    }
+    if (!generating && generationStage === "prepare-context") {
+      setGenerationStage("request-llm");
     }
     const startedAt =
       story?.storyGenerationStartedAt && story.storyGenerationStartedAt > 0
@@ -490,7 +524,13 @@ export default function GameScreen() {
     return () => {
       clearGenerationTimer();
     };
-  }, [storyGeneratingActive, story?.storyGenerationStartedAt, story?.id]);
+  }, [
+    storyGeneratingActive,
+    story?.storyGenerationStartedAt,
+    story?.id,
+    generating,
+    generationStage,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -718,8 +758,10 @@ export default function GameScreen() {
     storyGenerationControllers.set(targetStoryId, abortController);
     generationAbortRef.current = abortController;
     setGenerating(true);
+    patchGenerationStage(targetStoryId, token, "prepare-context");
     await patchStoryGenerationState(targetStoryId, "generating", "");
     try {
+      patchGenerationStage(targetStoryId, token, "request-llm");
       const result = await generateStory(
         {
           title: s.title,
@@ -734,6 +776,7 @@ export default function GameScreen() {
         },
         { signal: abortController.signal, timeoutMs: null },
       );
+      patchGenerationStage(targetStoryId, token, "parse-response");
       if (!result.segments || result.segments.length === 0) {
         throw new Error("No valid story segments were returned. Please retry.");
       }
@@ -752,9 +795,11 @@ export default function GameScreen() {
         .join("\n")
         .trim();
       s.currentIndex = 0;
+      patchGenerationStage(targetStoryId, token, "update-characters");
       const newCharacterCardIds = processNewCharacters(s, result.newCharacters);
       await applyAIInitialAffinityForNewCharacters(s, result.newCharacters);
       applyAutoRevealByStableRealName(s);
+      patchGenerationStage(targetStoryId, token, "generate-summary");
       try {
         const fullHistoryText = buildFullHistoryContext(s.segments);
         const summaryResult = await summarizeStory({
@@ -771,6 +816,7 @@ export default function GameScreen() {
       s.storyGenerationStatus = "idle";
       s.storyGenerationStartedAt = 0;
       s.lastStoryGenerationError = "";
+      patchGenerationStage(targetStoryId, token, "save-story");
       await updateStory(s);
       if (canUpdateGenerationUI(targetStoryId, token)) {
         setStory({ ...s });
@@ -1521,10 +1567,26 @@ export default function GameScreen() {
     return Math.max(32, Math.min(180, scaled));
   }
 
-  function normalizeScalePercent(raw: number): number {
-    const closest = BG_SCALE_PRESETS.reduce((best, value) => {
+  function getScalePresets(mode: "background" | "character") {
+    return mode === "background" ? BG_SCALE_PRESETS : CHARACTER_SCALE_PRESETS;
+  }
+
+  function getScaleRange(mode: "background" | "character") {
+    const presets = getScalePresets(mode);
+    return {
+      min: presets[0],
+      max: presets[presets.length - 1],
+    };
+  }
+
+  function normalizeScalePercent(
+    raw: number,
+    mode: "background" | "character",
+  ): number {
+    const presets = getScalePresets(mode);
+    const closest = presets.reduce((best, value) => {
       return Math.abs(value - raw) < Math.abs(best - raw) ? value : best;
-    }, BG_SCALE_PRESETS[0]);
+    }, presets[0]);
     return closest;
   }
 
@@ -1543,7 +1605,7 @@ export default function GameScreen() {
   }
 
   function updateBackgroundScalePercent(nextRaw: number) {
-    const next = normalizeScalePercent(nextRaw);
+    const next = normalizeScalePercent(nextRaw, "background");
     if (next === backgroundScalePercent) {
       restartScalePanelAutoHide();
       return;
@@ -1557,7 +1619,7 @@ export default function GameScreen() {
   }
 
   function updateCharacterScalePercent(nextRaw: number) {
-    const next = normalizeScalePercent(nextRaw);
+    const next = normalizeScalePercent(nextRaw, "character");
     if (next === characterScalePercent) {
       restartScalePanelAutoHide();
       return;
@@ -1593,7 +1655,8 @@ export default function GameScreen() {
   ) {
     const clampedY = Math.max(0, Math.min(BG_SCALE_TRACK_HEIGHT, locationY));
     const ratio = 1 - clampedY / BG_SCALE_TRACK_HEIGHT;
-    const value = 50 + ratio * 100;
+    const range = getScaleRange(mode);
+    const value = range.min + ratio * (range.max - range.min);
     updateScaleByMode(mode, value);
   }
 
@@ -1920,10 +1983,6 @@ export default function GameScreen() {
       Alert.alert("请稍候", "已有背景生图任务在进行中");
       return;
     }
-    if (storyGeneratingActive) {
-      Alert.alert("请稍候", "剧情生成进行中，请等待完成后再生图");
-      return;
-    }
 
     const config = await getImageConfig();
     if (!config.imageApiUrl || !config.imageModel) {
@@ -2187,7 +2246,7 @@ export default function GameScreen() {
   async function handleGeneratePortrait(
     card: CharacterCard & { isProtagonist?: boolean },
   ) {
-    if (!story || portraitGenerating) return;
+    if (!story) return;
     const portraitTaskKey = buildAutoPortraitKey(story.id, card.id);
     if (autoPortraitInFlightRef.current.has(portraitTaskKey)) {
       Alert.alert("请稍候", `${getCharacterDisplayName(card)} 正在生成形象图`);
@@ -2203,7 +2262,9 @@ export default function GameScreen() {
       Alert.alert("未配置生图", "请先在设置中填写图片 API URL 和模型名称");
       return;
     }
-    setPortraitGenerating(card.id);
+    setPortraitGeneratingIds((prev) =>
+      prev.includes(card.id) ? prev : [...prev, card.id],
+    );
     try {
       const prompt = await generateCharacterPortraitPrompt({
         ...card,
@@ -2231,7 +2292,9 @@ export default function GameScreen() {
     } finally {
       autoPortraitInFlightRef.current.delete(portraitTaskKey);
       syncImageQueueSnapshot();
-      setPortraitGenerating(null);
+      setPortraitGeneratingIds((prev) =>
+        prev.filter((itemId) => itemId !== card.id),
+      );
       void drainAutoPortraitQueue();
     }
   }
@@ -2260,10 +2323,6 @@ export default function GameScreen() {
   // Handle player choice — with dice mechanics
   async function handleChoice(choiceText: string, choiceIndex?: number) {
     if (!story || storyGeneratingActive) return;
-    if (imageGenerating) {
-      Alert.alert("请稍候", "生图进行中，请等待完成后再继续剧情");
-      return;
-    }
     setCustomInput("");
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -2380,6 +2439,7 @@ export default function GameScreen() {
     const preContinueSummaryTask = createSummaryCompressionTask(workingStory);
 
     setGenerating(true);
+    patchGenerationStage(targetStoryId, token, "prepare-context");
     workingStory.storyGenerationStatus = "generating";
     workingStory.storyGenerationStartedAt =
       workingStory.storyGenerationStartedAt || Date.now();
@@ -2407,6 +2467,7 @@ export default function GameScreen() {
         at: requestStartedAt,
       });
 
+      patchGenerationStage(targetStoryId, token, "request-llm");
       const result = await continueStory(
         {
           title: workingStory.title,
@@ -2425,6 +2486,7 @@ export default function GameScreen() {
         },
         { signal: abortController.signal, timeoutMs: null },
       );
+      patchGenerationStage(targetStoryId, token, "parse-response");
 
       const generatedSegments = Array.isArray(result.segments)
         ? (result.segments as StorySegment[])
@@ -2439,6 +2501,7 @@ export default function GameScreen() {
       workingStory.currentIndex = newIndex;
 
       // Process new characters
+      patchGenerationStage(targetStoryId, token, "update-characters");
       const newCharacterCardIds = processNewCharacters(
         workingStory,
         result.newCharacters,
@@ -2455,6 +2518,7 @@ export default function GameScreen() {
       workingStory.storyGenerationStartedAt = 0;
       workingStory.lastStoryGenerationError = "";
 
+      patchGenerationStage(targetStoryId, token, "save-story");
       await updateStory(workingStory);
       if (canUpdateGenerationUI(targetStoryId, token)) {
         if (workingStory.historyContext === historyBeforeChoice) {
@@ -2728,7 +2792,7 @@ export default function GameScreen() {
                   },
                 ]}
                 activeOpacity={0.8}
-                disabled={imageGenerating || storyGeneratingActive}
+                disabled={imageGenerating}
               >
                 {imageGenerating ? (
                   <ActivityIndicator
@@ -2849,6 +2913,9 @@ export default function GameScreen() {
                   {`剧情生成中... 已生成 ${generationElapsedSeconds} 秒`}
                 </Text>
               </View>
+              <Text style={[styles.generatingStageText, { color: colors.muted }]}>
+                {`当前阶段：${GENERATION_STAGE_LABELS[generationStage]}`}
+              </Text>
               <TouchableOpacity
                 onPress={cancelStoryGeneration}
                 style={[
@@ -3097,9 +3164,15 @@ export default function GameScreen() {
                 style={[
                   styles.scalePanelThumb,
                   {
-                    bottom:
-                      ((getScalePercentByMode(scalePanelMode) - 50) / 100) *
-                      (BG_SCALE_TRACK_HEIGHT - 14),
+                    bottom: (() => {
+                      const current = getScalePercentByMode(scalePanelMode);
+                      const range = getScaleRange(scalePanelMode);
+                      const ratio =
+                        range.max === range.min
+                          ? 0
+                          : (current - range.min) / (range.max - range.min);
+                      return ratio * (BG_SCALE_TRACK_HEIGHT - 14);
+                    })(),
                   },
                 ]}
               />
@@ -3110,7 +3183,7 @@ export default function GameScreen() {
             </Text>
 
             <View style={styles.scalePanelQuickRow}>
-              {BG_SCALE_PRESETS.map((value) => (
+              {getScalePresets(scalePanelMode).map((value) => (
                 <TouchableOpacity
                   key={value}
                   onPress={() => updateScaleByMode(scalePanelMode, value)}
@@ -3595,7 +3668,7 @@ export default function GameScreen() {
                             });
                           }}
                           onLongPress={() => showScalePanel("character")}
-                          disabled={portraitGenerating === item.id}
+                          disabled={portraitGeneratingIds.includes(item.id)}
                           activeOpacity={0.7}
                         >
                           {item.portraitUri ? (
@@ -3620,7 +3693,7 @@ export default function GameScreen() {
                                 },
                               ]}
                             >
-                              {portraitGenerating === item.id ? (
+                              {portraitGeneratingIds.includes(item.id) ? (
                                 <ActivityIndicator
                                   size="small"
                                   color={colors.primary}
@@ -3740,12 +3813,12 @@ export default function GameScreen() {
                       <View style={styles.characterCardActions}>
                         <TouchableOpacity
                           onPress={() => handleGeneratePortrait(item)}
-                          disabled={portraitGenerating === item.id}
+                          disabled={portraitGeneratingIds.includes(item.id)}
                         >
                           <Text
                             style={{ color: colors.primary, fontWeight: "600" }}
                           >
-                            {portraitGenerating === item.id
+                            {portraitGeneratingIds.includes(item.id)
                               ? "生成中..."
                               : item.portraitUri
                                 ? "重新生成形象"
@@ -4582,6 +4655,9 @@ const styles = StyleSheet.create({
   },
   generatingText: {
     fontSize: 15,
+  },
+  generatingStageText: {
+    fontSize: 13,
   },
   generatingCancelButton: {
     borderWidth: 1,
