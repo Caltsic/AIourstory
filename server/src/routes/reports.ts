@@ -36,10 +36,10 @@ type ReportBody = {
 
 function isDuplicateReportError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return (
-    /unique/i.test(message) &&
-    message.includes("idx_content_reports_unique_user_target")
-  );
+  return /unique constraint failed/i.test(message)
+    ? /content_reports\.(reporter_id|target_type|target_uuid)/i.test(message)
+    : /unique/i.test(message) &&
+        message.includes("idx_content_reports_unique_user_target");
 }
 
 async function findUserIdByUuid(userUuid: string) {

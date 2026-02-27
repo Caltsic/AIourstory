@@ -42,6 +42,8 @@ const MAPPING = {
   "photo.on.rectangle": "photo-library",
   "list.bullet": "format-list-bulleted",
   ellipsis: "more-horiz",
+  "square.and.arrow.down": "file-download",
+  "square.and.arrow.up": "file-upload",
 } as IconMapping;
 
 export function IconSymbol({

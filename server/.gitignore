@@ -2,6 +2,8 @@ node_modules/
 dist/
 data/
 .env
+.env.save
 *.db
 *.db-wal
 *.db-shm
+ecosystem.config.cjs.bak.*

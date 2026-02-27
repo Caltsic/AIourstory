@@ -104,6 +104,10 @@
   - `handleImportTxt()`（选择 txt、解析并批量导入为新预设）
   - 列表页顶部导入/导出入口按钮。
 - 修复 SDK 54 文件系统类型差异：改为使用 `expo-file-system/legacy` 读写字符串。
+- 修复可见性回归：
+  - `components/ui/icon-symbol.tsx` 增加 `square.and.arrow.down/up` 图标映射。
+  - `app/prompt-settings.tsx` 增加导入/导出按钮与对应逻辑，避免用户进入该页面看不到入口。
+- 修复后端重复举报冲突识别健壮性：兼容 SQLite `UNIQUE constraint failed` 报错模式。
 - 验证完成：`pnpm check` passed。
   - `pnpm test` passed (3 files, 21 tests)
   - `pnpm run check` passed

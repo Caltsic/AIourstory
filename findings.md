@@ -97,6 +97,8 @@
 - 导入解析支持从文本中提取 JSON 数据块，校验格式与版本，并补齐缺失 prompt key 默认值。
 - 导入策略为“全部作为新预设写入”，名称自动追加 `（导入）`，不覆盖现有预设。
 - App 页面已接入：顶部新增“导入 txt / 导出 txt”按钮；原生端支持文档选择+分享，Web 支持直接下载 txt。
+- 发现可见性问题：`prompt-settings.tsx` 入口未接入导入导出，且图标映射缺失导致按钮不显眼。
+- 已修复：补充 `IconSymbol` 映射并在 `prompt-settings.tsx` 同步接入导入/导出能力，确保两个提示词入口一致。
 - `lib/story-store.ts` 的 `JSON.parse` 在 `getStoryIds/getAllStories/getStory` 路径缺少兜底，脏数据会直接抛异常。
 - 当前文件内容主体已恢复可读中文，但仍需在本轮修复中顺带清理注释可读性并避免乱码回归。
 
